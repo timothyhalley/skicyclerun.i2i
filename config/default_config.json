@@ -1,0 +1,26 @@
+{
+  "input_folder": "/Volumes/MySSD/ImageLib/input",
+  "output_folder": "/Volumes/MySSD/ImageLib/output",
+  "input_image": "AndreaMaeAxe.png",
+  "output_format": "webp",
+  "style_name": "Ghibli",
+  "prompt": "Make this image humorous and meaningful in the Ghibli style.",
+  "negative_prompt": "extra limbs, distorted anatomy, blurry, duplicate arms, broken fingers",
+  "max_dim": 1024,
+  "num_inference_steps": 24,
+  "guidance_scale": 7.5,
+  "device": "mps",
+  "precision": "float32",
+  "lora": {
+    "adapter_name": "Ghibli",
+    "path": "Kontext-Style/Ghibli_lora",
+    "weights": "Ghibli_lora_weights.safetensors",
+    "trigger_words": ["ghibli", "whimsical", "storybook"]
+  },
+  "preprocess": {
+    "enabled": true,
+    "cleanup": true,
+    "face_detection": true
+  },
+  "cache_dir": "/Volumes/MySSD/huggingface"
+}
