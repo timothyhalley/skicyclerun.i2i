@@ -122,10 +122,12 @@ Default config: config/default_config.json (override with --config)
 # ────────────────────────────────────────────────────────────────────────
 # Save result image with timestamp (maintains subfolder structure)
 # ────────────────────────────────────────────────────────────────────────
-def save_result(image_path, result_image, config, input_base_folder=None):
+def save_result(image_path, result_image, config, input_base_folder=None, lora_name=None):
     base_name = os.path.splitext(os.path.basename(image_path))[0]
     timestamp = datetime.now().strftime("%d%H%M%S")
-    output_name = f"{base_name}_{config['style_name']}_{timestamp}.{config['output_format']}"
+    # Use lora_name if provided, otherwise fall back to config style_name
+    style = lora_name if lora_name else config['style_name']
+    output_name = f"{base_name}_{style}_{timestamp}.{config['output_format']}"
     
     # Maintain subfolder structure if processing batch from input folder
     if input_base_folder and image_path.startswith(input_base_folder):
@@ -422,10 +424,20 @@ def main():
                 "path": lora_info["path"],
                 "weights": lora_info["weights"]
             }
+            
+            # Override prompts with LoRA-specific prompts if available
+            if "prompt" in lora_info:
+                config["prompt"] = lora_info["prompt"]
+                logInfo(f"📝 Using LoRA-specific prompt")
+            if "negative_prompt" in lora_info:
+                config["negative_prompt"] = lora_info["negative_prompt"]
+            
             logInfo(f"🎨 Using LoRA style: {lora_key} - {lora_info['description']}")
             
             if args.debug:
                 logDebug(f"LoRA override config: {lora_cfg}")
+                logDebug(f"Prompt: {config['prompt']}")
+                logDebug(f"Negative prompt: {config['negative_prompt']}")
         except Exception as e:
             logError(f"Failed to load LoRA registry: {e}")
             sys.exit(1)
@@ -553,7 +565,7 @@ def main():
             logDebug(f"Result image - Size: {output_image.size}, Mode: {output_image.mode}")
 
         try:
-            save_result(image_path, output_image, config, input_base_folder)  # ✅ pass the PIL image here
+            save_result(image_path, output_image, config, input_base_folder, lora_name=lora_cfg["adapter_name"])  # ✅ pass the PIL image and LoRA name here
             if args.verbose:
                 logInfo(f"✅ Successfully saved result for {os.path.basename(image_path)}")
         except Exception as e:

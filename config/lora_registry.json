@@ -2,111 +2,155 @@
   "Paper_Cutting": {
     "path": "Kontext-Style/Paper_Cutting_lora",
     "weights": "Paper_Cutting_lora_weights.safetensors",
-    "description": "Paper cutting art style"
+    "description": "Paper cutting art style",
+    "prompt": "Transform into paper cutting art style with layered depth, clean edges, intricate cutout details, and shadow effects",
+    "negative_prompt": "3D rendering, photorealistic, blurry edges, messy cuts, low contrast"
   },
   "Irasutoya": {
     "path": "Kontext-Style/Irasutoya_lora",
     "weights": "Irasutoya_lora_weights.safetensors",
-    "description": "Irasutoya illustration style"
+    "description": "Irasutoya illustration style",
+    "prompt": "Transform into Irasutoya illustration style with simple shapes, friendly characters, clean lines, and bright cheerful colors",
+    "negative_prompt": "realistic, dark mood, complex details, harsh shadows, photographic"
   },
   "Fabric": {
     "path": "Kontext-Style/Fabric_lora",
     "weights": "Fabric_lora_weights.safetensors",
-    "description": "Fabric texture art style"
+    "description": "Fabric texture art style",
+    "prompt": "Transform into fabric art with textile textures, woven patterns, cloth materials, stitching details, and soft fabric appearance",
+    "negative_prompt": "hard surfaces, metallic, glass, photorealistic, sharp edges"
   },
   "Chinese_Ink": {
     "path": "Kontext-Style/Chinese_Ink_lora",
     "weights": "Chinese_Ink_lora_weights.safetensors",
-    "description": "Chinese ink painting style"
+    "description": "Chinese ink painting style",
+    "prompt": "Transform into traditional Chinese ink painting style with flowing brushstrokes, gradient washes, minimalist composition, and poetic atmosphere",
+    "negative_prompt": "colorful, digital art, sharp lines, modern style, photorealistic"
   },
   "Origami": {
     "path": "Kontext-Style/Origami_lora",
     "weights": "Origami_lora_weights.safetensors",
-    "description": "Origami paper folding style"
+    "description": "Origami paper folding style",
+    "prompt": "Transform into origami paper art with geometric folds, angular shapes, paper texture, crisp edges, and folded paper aesthetic",
+    "negative_prompt": "smooth curves, organic shapes, realistic texture, soft materials"
   },
   "Oil_Painting": {
     "path": "Kontext-Style/Oil_Painting_lora",
     "weights": "Oil_Painting_lora_weights.safetensors",
-    "description": "Classic oil painting style"
+    "description": "Classic oil painting style",
+    "prompt": "Transform into classic oil painting with visible brushstrokes, rich textures, layered paint, artistic interpretation, and traditional painting techniques",
+    "negative_prompt": "digital art, flat colors, sharp edges, photographic, modern style"
   },
   "Poly": {
     "path": "Kontext-Style/Poly_lora",
     "weights": "Poly_lora_weights.safetensors",
-    "description": "Low-poly 3D art style"
+    "description": "Low-poly 3D art style",
+    "prompt": "Transform into low-poly 3D art with geometric facets, angular shapes, flat color planes, minimalist polygons, and stylized 3D look",
+    "negative_prompt": "high detail, smooth surfaces, realistic, curved edges, photorealistic"
   },
   "LEGO": {
     "path": "Kontext-Style/LEGO_lora",
     "weights": "LEGO_lora_weights.safetensors",
-    "description": "LEGO brick building style"
+    "description": "LEGO brick building style",
+    "prompt": "Transform into LEGO brick construction with plastic block pieces, studs on top, bright colors, toy-like appearance, and modular brick design",
+    "negative_prompt": "organic shapes, realistic materials, soft edges, natural textures"
   },
   "Pop_Art": {
     "path": "Kontext-Style/Pop_Art_lora",
     "weights": "Pop_Art_lora_weights.safetensors",
-    "description": "Pop art style"
+    "description": "Pop art style",
+    "prompt": "Transform into pop art style with bold colors, high contrast, halftone dots, graphic shapes, vibrant palette, and Warhol-inspired aesthetic",
+    "negative_prompt": "muted colors, realistic shading, subtle tones, photographic, soft gradients"
   },
   "3D_Chibi": {
     "path": "Kontext-Style/3D_Chibi_lora",
     "weights": "3D_Chibi_lora_weights.safetensors",
-    "description": "3D chibi character style"
+    "description": "3D chibi character style",
+    "prompt": "Transform into cute 3D chibi character with oversized head, big expressive eyes, tiny body proportions, rounded features, and adorable appearance",
+    "negative_prompt": "realistic proportions, mature features, detailed anatomy, photorealistic"
   },
   "Pixel": {
     "path": "Kontext-Style/Pixel_lora",
     "weights": "Pixel_lora_weights.safetensors",
-    "description": "Pixel art style"
+    "description": "Pixel art style",
+    "prompt": "Transform into pixel art with visible pixels, limited color palette, retro game aesthetic, blocky shapes, and 8-bit or 16-bit style",
+    "negative_prompt": "smooth gradients, high resolution, photorealistic, modern graphics"
   },
   "Rick_Morty": {
     "path": "Kontext-Style/Rick_Morty_lora",
     "weights": "Rick_Morty_lora_weights.safetensors",
-    "description": "Rick and Morty cartoon style"
+    "description": "Rick and Morty cartoon style",
+    "prompt": "Transform into Rick and Morty cartoon style with exaggerated expressions, wobbly lines, sci-fi elements, comedic proportions, and Adult Swim aesthetic",
+    "negative_prompt": "realistic, serious tone, smooth lines, photographic, detailed shading"
   },
   "Line": {
     "path": "Kontext-Style/Line_lora",
     "weights": "Line_lora_weights.safetensors",
-    "description": "Line art drawing style"
+    "description": "Line art drawing style",
+    "prompt": "Transform into clean line art with bold outlines, minimal shading, clear contours, simple linework, and illustration style",
+    "negative_prompt": "photorealistic, full color, complex shading, painterly, blurry lines"
   },
   "Snoopy": {
     "path": "Kontext-Style/Snoopy_lora",
     "weights": "Snoopy_lora_weights.safetensors",
-    "description": "Snoopy/Peanuts comic style"
+    "description": "Snoopy/Peanuts comic style",
+    "prompt": "Transform into Peanuts comic style with simple rounded shapes, clean black outlines, minimal details, charming expressions, and Charles Schulz aesthetic",
+    "negative_prompt": "realistic, complex details, dark mood, photographic, detailed shading"
   },
   "Picasso": {
     "path": "Kontext-Style/Picasso_lora",
     "weights": "Picasso_lora_weights.safetensors",
-    "description": "Picasso cubist art style"
+    "description": "Picasso cubist art style",
+    "prompt": "Transform into Picasso cubist style with geometric fragmentation, multiple viewpoints, abstract shapes, angular forms, and modernist composition",
+    "negative_prompt": "realistic perspective, photographic, smooth curves, traditional composition"
   },
   "American_Cartoon": {
     "path": "Kontext-Style/American_Cartoon_lora",
     "weights": "American_Cartoon_lora_weights.safetensors",
-    "description": "American cartoon style"
+    "description": "American cartoon style",
+    "prompt": "Transform into classic American cartoon style with bold outlines, exaggerated features, dynamic expressions, vibrant colors, and animated look",
+    "negative_prompt": "realistic, anime style, photographic, subtle expressions, muted colors"
   },
   "Macaron": {
     "path": "Kontext-Style/Macaron_lora",
     "weights": "Macaron_lora_weights.safetensors",
-    "description": "Macaron sweet style"
+    "description": "Macaron sweet style",
+    "prompt": "Transform into sweet macaron style with pastel colors, soft textures, cute aesthetic, dessert-like appearance, and sugary delicate look",
+    "negative_prompt": "dark colors, harsh textures, realistic, savory, rough surfaces"
   },
   "Jojo": {
     "path": "Kontext-Style/Jojo_lora",
     "weights": "Jojo_lora_weights.safetensors",
-    "description": "JoJo's Bizarre Adventure anime style"
+    "description": "JoJo's Bizarre Adventure anime style",
+    "prompt": "Transform into JoJo's Bizarre Adventure style with dramatic poses, intense expressions, bold linework, dynamic energy, powerful stance, and Stand aura effects",
+    "negative_prompt": "soft style, cute proportions, gentle expressions, realistic, blurry, weak poses"
   },
   "Vector": {
     "path": "Kontext-Style/Vector_lora",
     "weights": "Vector_lora_weights.safetensors",
-    "description": "Vector graphic art style"
+    "description": "Vector graphic art style",
+    "prompt": "Transform into vector graphic art with clean paths, smooth curves, flat colors, scalable design, geometric precision, and digital illustration style",
+    "negative_prompt": "raster texture, painterly, rough edges, photorealistic, grainy"
   },
   "Van_Gogh": {
     "path": "Kontext-Style/Van_Gogh_lora",
     "weights": "Van_Gogh_lora_weights.safetensors",
-    "description": "Van Gogh impressionist style"
+    "description": "Van Gogh impressionist style",
+    "prompt": "Transform into Van Gogh impressionist style with swirling brushstrokes, expressive texture, vibrant colors, thick paint application, and post-impressionist aesthetic",
+    "negative_prompt": "photorealistic, smooth surfaces, flat colors, digital art, sharp edges"
   },
   "Ghibli": {
     "path": "Kontext-Style/Ghibli_lora",
     "weights": "Ghibli_lora_weights.safetensors",
-    "description": "Studio Ghibli animation style"
+    "description": "Studio Ghibli animation style",
+    "prompt": "Transform into Studio Ghibli animation style with whimsical characters, soft watercolor backgrounds, dreamy atmosphere, hand-drawn aesthetic, and storybook charm",
+    "negative_prompt": "realistic, dark mood, harsh lighting, photographic, modern 3D style"
   },
   "Clay_Toy": {
     "path": "Kontext-Style/Clay_Toy_lora",
     "weights": "Clay_Toy_lora_weights.safetensors",
-    "description": "Clay toy/claymation style"
+    "description": "Clay toy/claymation style",
+    "prompt": "Transform into clay toy style with sculpted appearance, matte clay texture, handcrafted look, stop-motion aesthetic, and playful character design",
+    "negative_prompt": "smooth plastic, realistic skin, photographic, sharp details, glossy surfaces"
   }
 }
