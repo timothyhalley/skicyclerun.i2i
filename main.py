@@ -212,10 +212,11 @@ def main():
     if effective_log_file:
         os.makedirs(os.path.dirname(effective_log_file), exist_ok=True)
 
+    # Configure logging with clean format (no "INFO:root:" prefix)
     logging.basicConfig(
         filename=effective_log_file if effective_log_file else None,
         level=logging.DEBUG if args.debug else logging.INFO,
-        format="%(asctime)s - %(levelname)s - %(message)s"
+        format="%(message)s"  # Clean format - just the message
     )
     
     # ─────────────────────────────────────────────────────────────
