@@ -8,8 +8,8 @@ def discover_loras(base_path="Kontext-Style"):
     Returns a sorted list of available LoRA adapter names (folder names).
     """
     if not os.path.exists(base_path):
-        logging.info(f"⚠️ LoRA base path not found: {base_path}")
-        return []
+        logInfo(f"⚠️ LoRA base path not found: {base_path}")
+        return {}
 
     return sorted([
         name for name in os.listdir(base_path)

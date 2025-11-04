@@ -1,14 +1,14 @@
 from tqdm import tqdm
 import threading
 import time
-import logging
+from utils.logger import logInfo
 
 def run_inference(pipeline, image, prompt, negative_prompt, steps, guidance):
-    logging.info("🧠 Starting inference...")
+    logInfo("🧠 Starting inference...")
     
     # Use the actual image dimensions (already properly sized)
     width, height = image.size
-    logging.info(f"🖼️  Generating {width}×{height} image (aspect ratio preserved)")
+    logInfo(f"🖼️  Generating {width}×{height} image (aspect ratio preserved)")
 
     # Run inference - FLUX provides its own progress bar
     result = pipeline(
@@ -19,5 +19,5 @@ def run_inference(pipeline, image, prompt, negative_prompt, steps, guidance):
         num_inference_steps=steps
     )
 
-    logging.info("✅ Inference complete.")
+    logInfo("✅ Inference complete.")
     return result
