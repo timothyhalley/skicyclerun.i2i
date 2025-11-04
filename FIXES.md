@@ -4,7 +4,7 @@
 
 The black image was caused by several deviations from the proven working pattern:
 
-### ❌ What Was Wrong:
+### ❌ What Was Wrong
 
 1. **Wrong dtype**: Using `float16` instead of `bfloat16`
 
@@ -24,7 +24,7 @@ The black image was caused by several deviations from the proven working pattern
 4. **Missing guidance_scale**: Working example doesn't use it
    - FLUX may handle this differently than other diffusion models
 
-## ✅ What Was Fixed:
+## ✅ What Was Fixed
 
 ### 1. Pipeline Loader (`core/pipeline_loader.py`)
 
