@@ -1,0 +1,112 @@
+{
+  "Paper_Cutting": {
+    "path": "Kontext-Style/Paper_Cutting_lora",
+    "weights": "Paper_Cutting_lora_weights.safetensors",
+    "description": "Paper cutting art style"
+  },
+  "Irasutoya": {
+    "path": "Kontext-Style/Irasutoya_lora",
+    "weights": "Irasutoya_lora_weights.safetensors",
+    "description": "Irasutoya illustration style"
+  },
+  "Fabric": {
+    "path": "Kontext-Style/Fabric_lora",
+    "weights": "Fabric_lora_weights.safetensors",
+    "description": "Fabric texture art style"
+  },
+  "Chinese_Ink": {
+    "path": "Kontext-Style/Chinese_Ink_lora",
+    "weights": "Chinese_Ink_lora_weights.safetensors",
+    "description": "Chinese ink painting style"
+  },
+  "Origami": {
+    "path": "Kontext-Style/Origami_lora",
+    "weights": "Origami_lora_weights.safetensors",
+    "description": "Origami paper folding style"
+  },
+  "Oil_Painting": {
+    "path": "Kontext-Style/Oil_Painting_lora",
+    "weights": "Oil_Painting_lora_weights.safetensors",
+    "description": "Classic oil painting style"
+  },
+  "Poly": {
+    "path": "Kontext-Style/Poly_lora",
+    "weights": "Poly_lora_weights.safetensors",
+    "description": "Low-poly 3D art style"
+  },
+  "LEGO": {
+    "path": "Kontext-Style/LEGO_lora",
+    "weights": "LEGO_lora_weights.safetensors",
+    "description": "LEGO brick building style"
+  },
+  "Pop_Art": {
+    "path": "Kontext-Style/Pop_Art_lora",
+    "weights": "Pop_Art_lora_weights.safetensors",
+    "description": "Pop art style"
+  },
+  "3D_Chibi": {
+    "path": "Kontext-Style/3D_Chibi_lora",
+    "weights": "3D_Chibi_lora_weights.safetensors",
+    "description": "3D chibi character style"
+  },
+  "Pixel": {
+    "path": "Kontext-Style/Pixel_lora",
+    "weights": "Pixel_lora_weights.safetensors",
+    "description": "Pixel art style"
+  },
+  "Rick_Morty": {
+    "path": "Kontext-Style/Rick_Morty_lora",
+    "weights": "Rick_Morty_lora_weights.safetensors",
+    "description": "Rick and Morty cartoon style"
+  },
+  "Line": {
+    "path": "Kontext-Style/Line_lora",
+    "weights": "Line_lora_weights.safetensors",
+    "description": "Line art drawing style"
+  },
+  "Snoopy": {
+    "path": "Kontext-Style/Snoopy_lora",
+    "weights": "Snoopy_lora_weights.safetensors",
+    "description": "Snoopy/Peanuts comic style"
+  },
+  "Picasso": {
+    "path": "Kontext-Style/Picasso_lora",
+    "weights": "Picasso_lora_weights.safetensors",
+    "description": "Picasso cubist art style"
+  },
+  "American_Cartoon": {
+    "path": "Kontext-Style/American_Cartoon_lora",
+    "weights": "American_Cartoon_lora_weights.safetensors",
+    "description": "American cartoon style"
+  },
+  "Macaron": {
+    "path": "Kontext-Style/Macaron_lora",
+    "weights": "Macaron_lora_weights.safetensors",
+    "description": "Macaron sweet style"
+  },
+  "Jojo": {
+    "path": "Kontext-Style/Jojo_lora",
+    "weights": "Jojo_lora_weights.safetensors",
+    "description": "JoJo's Bizarre Adventure anime style"
+  },
+  "Vector": {
+    "path": "Kontext-Style/Vector_lora",
+    "weights": "Vector_lora_weights.safetensors",
+    "description": "Vector graphic art style"
+  },
+  "Van_Gogh": {
+    "path": "Kontext-Style/Van_Gogh_lora",
+    "weights": "Van_Gogh_lora_weights.safetensors",
+    "description": "Van Gogh impressionist style"
+  },
+  "Ghibli": {
+    "path": "Kontext-Style/Ghibli_lora",
+    "weights": "Ghibli_lora_weights.safetensors",
+    "description": "Studio Ghibli animation style"
+  },
+  "Clay_Toy": {
+    "path": "Kontext-Style/Clay_Toy_lora",
+    "weights": "Clay_Toy_lora_weights.safetensors",
+    "description": "Clay toy/claymation style"
+  }
+}

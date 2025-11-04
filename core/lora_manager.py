@@ -42,13 +42,14 @@ def apply_lora(pipeline, lora_config, config):
         logging.error(f"❌ Failed to resolve LoRA weights: {e}")
         raise
 
-    # ✅ Load weights from resolved repo
+    # ✅ Load weights - match the working example pattern exactly
+    logging.info(f"🎨 Loading LoRA weights from HuggingFace Hub...")
     pipeline.load_lora_weights(
-        pretrained_model_name_or_path_or_dict=lora_config["path"],
+        lora_config["path"],
         weight_name=lora_config["weights"],
-        adapter_name=lora_config["adapter_name"],
-        prefix=None,
-        cache_dir=config["cache_dir"],
-        local_files_only=False
+        adapter_name="lora"  # Use simple name like working example
     )
-    pipeline.set_adapters([lora_config["adapter_name"]], adapter_weights=[1])
+    
+    # Activate with weight 1.0 (like working example)
+    pipeline.set_adapters(["lora"], adapter_weights=[1.0])
+    logging.info(f"✅ LoRA '{lora_config['adapter_name']}' loaded and activated successfully.")

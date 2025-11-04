@@ -18,20 +18,24 @@ def resolve_device(config_device):
 def load_pipeline(model_name, device, precision, config):
     logInfo(f"🔧 Initializing pipeline: {model_name} on {device} with {precision}")
     cache_dir = config["cache_dir"]
-    logInfo("📦 Loading model config and tokenizer...")
-
-    variant = config.get("variant")  # optional in config
-
-    logInfo("🚚 Loading pipeline components from cache...")
+    
+    # FLUX works best with bfloat16 (as shown in working example)
+    # Use torch_dtype during load for efficiency
+    if precision == "float16":
+        torch_dtype = torch.bfloat16  # FLUX requires bfloat16, not float16!
+    elif precision == "bfloat16":
+        torch_dtype = torch.bfloat16
+    else:
+        torch_dtype = torch.float32
+    
+    logInfo(f"🚚 Loading pipeline with {torch_dtype}...")
     pipeline = FluxKontextPipeline.from_pretrained(
         model_name,
-        dtype=torch.float32 if precision == "float32" else torch.float16,
-        cache_dir=config["cache_dir"],
-        revision="main",
-        use_safetensors=True,
-        **({"variant": variant} if variant else {})  # ✅ only pass if defined
+        torch_dtype=torch_dtype,
+        cache_dir=cache_dir
     )
-    logInfo("✅ Pipeline components loaded into memory.")
-
-    pipeline.to(device)
+    
+    logInfo(f"✅ Pipeline loaded, moving to {device}...")
+    pipeline = pipeline.to(device)
+    
     return pipeline

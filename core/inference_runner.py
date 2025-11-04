@@ -5,34 +5,19 @@ import logging
 
 def run_inference(pipeline, image, prompt, negative_prompt, steps, guidance):
     logging.info("🧠 Starting inference...")
+    
+    # Use the actual image dimensions (already properly sized)
+    width, height = image.size
+    logging.info(f"🖼️  Generating {width}×{height} image (aspect ratio preserved)")
 
-    # Start simulated progress bar in a separate thread
-    progress_done = False
-
-    def simulate_progress():
-        with tqdm(total=100, desc="Inference Progress", unit="%") as pbar:
-            while not progress_done:
-                time.sleep(0.5)
-                pbar.update(2)
-                if pbar.n >= 100:
-                    pbar.n = 99  # hold at 99% until done
-                    pbar.refresh()
-
-    thread = threading.Thread(target=simulate_progress)
-    thread.start()
-
-    # Run actual inference
+    # Run inference - FLUX provides its own progress bar
     result = pipeline(
-        image,
+        image=image,  # Use explicit image= parameter like working example
         prompt=prompt,
-        negative_prompt=negative_prompt,
-        num_inference_steps=steps,
-        guidance_scale=guidance
+        height=height,
+        width=width,
+        num_inference_steps=steps
     )
-
-    # Stop progress bar
-    progress_done = True
-    thread.join()
 
     logging.info("✅ Inference complete.")
     return result

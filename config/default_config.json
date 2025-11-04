@@ -1,7 +1,7 @@
 {
   "input_folder": "/Volumes/MySSD/ImageLib/input",
   "output_folder": "/Volumes/MySSD/ImageLib/output",
-  "input_image": "AndreaMaeAxe.png",
+  "input_image": "/Volumes/MySSD/ImageLib/input/GymLady.jpeg",
   "output_format": "webp",
   "style_name": "Ghibli",
   "prompt": "Make this image humorous and meaningful in the Ghibli style.",
@@ -10,7 +10,7 @@
   "num_inference_steps": 24,
   "guidance_scale": 7.5,
   "device": "mps",
-  "precision": "float32",
+  "precision": "bfloat16",
   "lora": {
     "adapter_name": "Ghibli",
     "path": "Kontext-Style/Ghibli_lora",

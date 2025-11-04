@@ -1,6 +1,8 @@
 # 📘 Kontext Transform: Modular Image-to-Image with LoRA Adapters
 
-Kontext Transform is a modular Python tool for transforming images into humorous, meaningful, or stylistically rich outputs using LoRA-enhanced pipelines. Built for creative technologists, it supports batch processing, adapter switching, dry-run previews, and quality control hooks.
+Kontext Transform is a modular Python tool for transforming images into humorous, meaningful, or stylistically rich outputs using LoRA-enhanced pipelines. Built for creative technologists, it supports batch processing, adapter switching, dry-run previews, and quality control hooks. Primary motivator is this toolset located here:
+
+https://huggingface.co/Kontext-Style/models
 
 ---
 
