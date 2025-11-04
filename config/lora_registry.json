@@ -152,5 +152,12 @@
     "description": "Clay toy/claymation style",
     "prompt": "Transform into clay toy style with sculpted appearance, matte clay texture, handcrafted look, stop-motion aesthetic, and playful character design",
     "negative_prompt": "smooth plastic, realistic skin, photographic, sharp details, glossy surfaces"
+  },
+  "Pencil_Drawing": {
+    "path": "fal/Pencil-Drawing-Kontext-Dev-LoRA",
+    "weights": "wIvB3erdwsH68WsO1RTbv_adapter_model_comfy_converted.safetensors",
+    "description": "Pencil drawing sketch style",
+    "prompt": "Transform into pencil drawing sketch style with hand-drawn lines, graphite texture, sketch marks, artistic shading, and traditional drawing aesthetic",
+    "negative_prompt": "photorealistic, digital art, smooth colors, painted, polished finish"
   }
 }

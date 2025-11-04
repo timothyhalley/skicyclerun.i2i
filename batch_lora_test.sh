@@ -30,6 +30,7 @@ LORAS=(
     "American_Cartoon"
     "3D_Chibi"
     "Clay_Toy"
+    "Pencil_Drawing"
 )
 
 echo "🚀 Starting batch LoRA testing"
