@@ -212,12 +212,18 @@ def main():
     if effective_log_file:
         os.makedirs(os.path.dirname(effective_log_file), exist_ok=True)
 
-    # Configure logging with clean format (no "INFO:root:" prefix)
-    logging.basicConfig(
-        filename=effective_log_file if effective_log_file else None,
-        level=logging.DEBUG if args.debug else logging.INFO,
-        format="%(message)s"  # Clean format - just the message
-    )
+    # Configure logging to write ONLY to file (no console output)
+    # Console output is handled by print() in logger.py wrapper functions
+    if effective_log_file:
+        file_handler = logging.FileHandler(effective_log_file)
+        file_handler.setFormatter(logging.Formatter("%(message)s"))
+        logging.root.handlers = []  # Clear any existing handlers
+        logging.root.addHandler(file_handler)
+        logging.root.setLevel(logging.DEBUG if args.debug else logging.INFO)
+    else:
+        # If no log file, disable logging entirely (console uses print())
+        logging.root.handlers = []
+        logging.root.setLevel(logging.CRITICAL + 1)  # Disable all logging
     
     # ─────────────────────────────────────────────────────────────
     # Device selection with CPU fallback option (before computing effective settings)
@@ -510,6 +516,10 @@ def main():
         if args.debug:
             logDebug(f"Image loaded - Size: {image.size}, Mode: {image.mode}")
 
+        # Always show the actual prompts being used for this image
+        logInfo(f"💬 Prompt: {config['prompt']}")
+        logInfo(f"🚫 Negative: {config['negative_prompt']}")
+
         if args.preview:
             preview_path = os.path.join(config["output_folder"], f"preview_{os.path.basename(image_path)}")
             image.save(preview_path)
@@ -586,17 +596,18 @@ def main():
         total_hours = int(total_time // 3600)
         total_mins = int((total_time % 3600) // 60)
         total_secs = int(total_time % 60)
-        total_time_str = f"{total_hours:02d}:{total_mins:02d}:{total_secs:02d}"
+        # Format: 06h 19m 38s
+        total_time_str = f"{total_hours:02d}h {total_mins:02d}m {total_secs:02d}s"
         avg_time = total_time / total_files
         avg_mins = int(avg_time // 60)
         avg_secs = int(avg_time % 60)
-        avg_time_str = f"{avg_mins}m {avg_secs}s" if avg_mins > 0 else f"{avg_secs}s"
+        avg_time_str = f"{avg_mins}m {avg_secs}s"
         
-        logInfo("\n" + "=" * 80)
-        logInfo(f"🎉 BATCH COMPLETE: {total_files} images processed")
-        logInfo(f"⏱️  Total time: {total_time_str}")
-        logInfo(f"📊 Average time per image: {avg_time_str}")
-        logInfo("=" * 80 + "\n")
+        print("\n" + "=" * 80)
+        print(f"🎉 BATCH COMPLETE: {total_files} images processed")
+        print(f"⏱️  Total time: {total_time_str}")
+        print(f"📊 Average time per image: {avg_time_str}")
+        print("=" * 80 + "\n")
     
     # Final cleanup
     cleanup_memory()

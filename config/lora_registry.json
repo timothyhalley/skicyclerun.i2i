@@ -152,5 +152,47 @@
     "description": "Clay toy/claymation style",
     "prompt": "Transform into clay toy style with sculpted appearance, matte clay texture, handcrafted look, stop-motion aesthetic, and playful character design",
     "negative_prompt": "smooth plastic, realistic skin, photographic, sharp details, glossy surfaces"
+  },
+  "Super_Pencil": {
+    "path": "prithivMLmods/Super-Pencil-Flux-LoRA",
+    "weights": "Pencil.safetensors",
+    "description": "Refined pencil sketch style with clean linework and tonal depth",
+    "prompt": "Simple Pencil, a realistic pencil drawing of the input image with expressive shading and clean contours",
+    "negative_prompt": "cartoonish, messy lines, low detail, exaggerated features, childish rendering"
+  },
+  "Poly_Futurism": {
+    "path": "Kontext-Style/Poly_lora",
+    "weights": "Poly_lora_weights.safetensors",
+    "description": "Futuristic polygonal abstraction with faceted geometry and digital sculpture aesthetics",
+    "prompt": "Transform into polygonal futuristic art style with low-poly geometry, sharp edges, and abstract composition",
+    "negative_prompt": "soft textures, organic shapes, photorealism, blurry edges, painterly strokes"
+  },
+  "Glass_Prism": {
+    "path": "drbaph/GlassPrism-kontext-LoRA",
+    "weights": "GlassPrism.safetensors",
+    "description": "Surreal refractive style with crystalline lighting and glass-like distortion",
+    "prompt": "Make this object a glass prism with reflections, black background",
+    "negative_prompt": "flat lighting, matte surfaces, realism, low contrast, muddy colors"
+  },
+  "Sketch": {
+    "path": "Shakker-Labs/FLUX.1-Kontext-dev-LoRA-Sketch-Style",
+    "weights": "FLUX-kontext-lora-sketch-style.safetensors",
+    "description": "Sketch style LoRA trained on Flux.1-Kontext-dev",
+    "prompt": "Convert real photos into sketches with clean linework and expressive shading. Styled with monochrome, sketch, greyscale tones with pencil texture and precise details.",
+    "negative_prompt": "photorealism, blurry edges, painterly strokes, low contrast"
+  },
+  "American_Comic": {
+    "path": "borozkut/Comic-Style-LoRA-FLUX.1dev",
+    "weights": "Comic-Style-LoRA-FLUX.1dev.safetensors",
+    "description": "Hand-drawn American comic style LoRA trained on FLUX.1-Kontext-dev. Captures bold linework, vibrant color blocking, and stylized shading.",
+    "prompt": "c0m4i4, hand-drawn American comic style, bold ink lines, vibrant flat colors, stylized shading, expressive character design",
+    "negative_prompt": "photorealism, painterly strokes, low contrast, muddy colors, soft edges, realism artifacts"
+  },
+  "Ink_Wash": {
+    "path": "Kontext-Style/Chinese_Ink_lora",
+    "weights": "Chinese_Ink_lora_weights.safetensors",
+    "description": "Ink wash style LoRA trained on FLUX.1-Kontext-dev. Emulates traditional East Asian brushwork with fluid strokes and tonal gradients.",
+    "prompt": "Eastern ink wash style, expressive brushwork, monochrome gradients, traditional sumi-e aesthetic. No harsh contrast, just flowing ink tones, ew elements, lots of breathing room and evokes stillness, impermanence, and introspection",
+    "negative_prompt": "photorealism, color, sharp edges, digital artifacts, high contrast"
   }
 }

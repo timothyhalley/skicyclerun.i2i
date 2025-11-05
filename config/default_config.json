@@ -3,24 +3,16 @@
   "output_folder": "/Volumes/MySSD/ImageLib/output",
   "input_image": "/Volumes/MySSD/ImageLib/input/GymLady.jpeg",
   "output_format": "webp",
-  "style_name": "JoJo's",
-  "prompt": "JoJo's Bizarre Adventure style: dramatic menacing pose, intense gaze, bold contours, vibrant colors, Stand energy effects",
-  "negative_prompt": "soft style, cute, chibi, realistic, blurry, deformed, extra limbs, disfigured, poorly drawn, mutation, ugly, blurry, bad anatomy, bad proportions, cloned face, disfigured, gross proportions, malformed limbs, missing arms, missing legs, extra arms, extra legs, fused fingers, too many fingers, long neck",
   "max_dim": 1024,
   "num_inference_steps": 24,
   "guidance_scale": 7.5,
   "device": "mps",
   "precision": "bfloat16",
-  "lora": {
-    "adapter_name": "Ghibli",
-    "path": "Kontext-Style/Ghibli_lora",
-    "weights": "Ghibli_lora_weights.safetensors",
-    "trigger_words": ["ghibli", "whimsical", "storybook"]
-  },
   "preprocess": {
     "enabled": true,
     "cleanup": true,
-    "face_detection": true
+    "face_detection": false
   },
-  "cache_dir": "/Volumes/MySSD/huggingface"
+  "cache_dir": "/Volumes/MySSD/huggingface",
+  "_comment": "NOTE: style_name, prompt, negative_prompt, and lora are ONLY used when --lora is NOT specified. Since you always use --lora, those values come from config/lora_registry.json instead."
 }
