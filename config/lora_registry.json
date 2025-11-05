@@ -183,7 +183,7 @@
   },
   "American_Comic": {
     "path": "borozkut/Comic-Style-LoRA-FLUX.1dev",
-    "weights": "Comic-Style-LoRA-FLUX.1dev.safetensors",
+    "weights": "comic-style-lora-000014.safetensors",
     "description": "Hand-drawn American comic style LoRA trained on FLUX.1-Kontext-dev. Captures bold linework, vibrant color blocking, and stylized shading.",
     "prompt": "c0m4i4, hand-drawn American comic style, bold ink lines, vibrant flat colors, stylized shading, expressive character design",
     "negative_prompt": "photorealism, painterly strokes, low contrast, muddy colors, soft edges, realism artifacts"

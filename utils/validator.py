@@ -1,5 +1,5 @@
 REQUIRED_FIELDS = [
-    "input_folder", "output_folder", "input_image", "prompt",
+    "input_folder", "output_folder", "input_image",
     "num_inference_steps", "guidance_scale", "device", "precision"
 ]
 

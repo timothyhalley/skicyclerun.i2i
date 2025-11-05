@@ -125,8 +125,8 @@ Default config: config/default_config.json (override with --config)
 def save_result(image_path, result_image, config, input_base_folder=None, lora_name=None):
     base_name = os.path.splitext(os.path.basename(image_path))[0]
     timestamp = datetime.now().strftime("%d%H%M%S")
-    # Use lora_name if provided, otherwise fall back to config style_name
-    style = lora_name if lora_name else config['style_name']
+    # Use lora_name if provided, otherwise use 'default'
+    style = lora_name if lora_name else 'default'
     output_name = f"{base_name}_{style}_{timestamp}.{config['output_format']}"
     
     # Maintain subfolder structure if processing batch from input folder
@@ -353,9 +353,7 @@ def main():
             logInfo(f"        🖼️  Would process single image: {target_image}", console_only=True)
             
         logInfo(f"        💾  Would save results to: {config['output_folder']}", console_only=True)
-        logInfo(f"        🎨  Using style '{config['style_name']}' with LoRA: {effective['lora']}", console_only=True)
-        logInfo(f"        💭  Prompt: {config['prompt']}", console_only=True)
-        logInfo(f"        🚫  Negative prompt: {config['negative_prompt']}", console_only=True)
+        logInfo(f"        🎨  Using LoRA: {effective['lora']}", console_only=True)
         logInfo(f"        ⚙️  Inference steps: {config['num_inference_steps']} | Guidance: {config['guidance_scale']}", console_only=True)
         
         if no_action_args:  # Show CLI primer only when run without args
@@ -386,7 +384,6 @@ def main():
     cleanup_memory()
         
     logInfo(f"🎯 Target device: {device} | Precision: {config['precision']}")
-    logInfo(f"🎨 Style: {config['style_name']} | Prompt: {config['prompt']}")
 
     # Warn if using float32 on MPS (memory intensive)
     if device == "mps" and config.get('precision') == 'float32':
