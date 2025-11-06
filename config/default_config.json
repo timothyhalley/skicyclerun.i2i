@@ -5,7 +5,7 @@
   "output_format": "webp",
   "max_dim": 1024,
   "num_inference_steps": 24,
-  "guidance_scale": 7.5,
+  "guidance_scale": 3.5,
   "device": "mps",
   "precision": "bfloat16",
   "preprocess": {

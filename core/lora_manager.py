@@ -28,6 +28,12 @@ def apply_lora(pipeline, lora_config, config):
         logError(f"LoRA config missing keys: {missing}")
         raise ValueError(f"Incomplete LoRA config: missing {missing}")
 
+    # Get strength values from lora_config (from registry) or use defaults
+    lora_scale = lora_config.get("lora_scale", 0.8)
+    text_encoder_scale = lora_config.get("text_encoder_scale", 0.6)
+    
+    logInfo(f"⚖️  LoRA strength - UNet: {lora_scale}, Text Encoder: {text_encoder_scale}")
+
     # 🔍 Resolve and log actual cache path
     try:
         resolved_path = hf_hub_download(
@@ -48,6 +54,13 @@ def apply_lora(pipeline, lora_config, config):
         adapter_name="lora"  # Use simple name like working example
     )
     
-    # Activate with weight 1.0 (like working example)
-    pipeline.set_adapters(["lora"], adapter_weights=[1.0])
+    # Activate with configurable weights from registry
+    pipeline.set_adapters(["lora"], adapter_weights=[lora_scale])
+    
+    # Set text encoder scale if the pipeline supports it
+    # Note: FLUX uses dual text encoders (CLIP-L + T5-XXL)
+    if hasattr(pipeline, 'text_encoder') and hasattr(pipeline.text_encoder, 'set_adapter_scale'):
+        pipeline.text_encoder.set_adapter_scale('lora', text_encoder_scale)
+        logInfo(f"✅ Text encoder scale set to {text_encoder_scale}")
+    
     logInfo(f"✅ LoRA '{lora_config['adapter_name']}' loaded and activated successfully.")

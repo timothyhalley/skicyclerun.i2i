@@ -1,0 +1,88 @@
+{
+  "pipeline": {
+    "name": "SkiCycleRun Photo Processing Pipeline",
+    "version": "1.0.0",
+    "stages": [
+      "export",
+      "cleanup",
+      "metadata_extraction",
+      "preprocessing",
+      "watermarking",
+      "lora_processing"
+    ]
+  },
+  "paths": {
+    "apple_photos_export": "/Volumes/MySSD/ImageLib/input",
+    "raw_input": "/Volumes/MySSD/ImageLib/input",
+    "preprocessed": "/Volumes/MySSD/ImageLib/preprocessed",
+    "output": "/Volumes/MySSD/ImageLib/output",
+    "archive": "/Volumes/MySSD/ImageLib/archive",
+    "metadata_catalog": "/Volumes/MySSD/ImageLib/metadata/catalog.json"
+  },
+  "export": {
+    "enabled": true,
+    "source": "apple_photos",
+    "format": "jpeg",
+    "quality": 95,
+    "preserve_albums": true,
+    "script_path": "scripts/osxPhotoExporter.scpt"
+  },
+  "cleanup": {
+    "enabled": true,
+    "archive_old_outputs": true,
+    "remove_temp_files": true,
+    "archive_retention_days": 30
+  },
+  "metadata_extraction": {
+    "enabled": true,
+    "extract_exif": true,
+    "extract_geolocation": true,
+    "geocoding": {
+      "provider": "nominatim",
+      "api_url": "https://nominatim.openstreetmap.org/reverse",
+      "user_agent": "SkiCycleRun/1.0",
+      "rate_limit_seconds": 1.0,
+      "cache_enabled": true,
+      "cache_file": "/Volumes/MySSD/ImageLib/metadata/geocode_cache.json"
+    }
+  },
+  "preprocessing": {
+    "enabled": true,
+    "max_dimension": 2048,
+    "format": "webp",
+    "quality": 90,
+    "preserve_aspect_ratio": true,
+    "optimize": true,
+    "catalog_metadata": true
+  },
+  "watermark": {
+    "enabled": true,
+    "format": "SkiCycleRun © {year} {astro_symbol} {location}",
+    "year_offset": 1,
+    "font": {
+      "family": "Asimovian",
+      "size": 24,
+      "color": [255, 255, 255, 180],
+      "stroke_color": [0, 0, 0, 200],
+      "stroke_width": 2
+    },
+    "position": "bottom_right",
+    "margin": { "x": 20, "y": 20 },
+    "apply_before_lora": false
+  },
+  "lora_processing": {
+    "enabled": true,
+    "use_existing_config": true,
+    "config_path": "config/default_config.json",
+    "registry_path": "config/lora_registry.json",
+    "default_lora": "American_Cartoon",
+    "batch_mode": true,
+    "preserve_metadata": true
+  },
+  "logging": {
+    "level": "INFO",
+    "console": true,
+    "file": "logs/pipeline_{timestamp}.log",
+    "include_timestamps": true
+  }
+}

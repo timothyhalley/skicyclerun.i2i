@@ -4,195 +4,251 @@
     "weights": "Paper_Cutting_lora_weights.safetensors",
     "description": "Paper cutting art style",
     "prompt": "Transform into paper cutting art style with layered depth, clean edges, intricate cutout details, and shadow effects",
-    "negative_prompt": "3D rendering, photorealistic, blurry edges, messy cuts, low contrast"
+    "negative_prompt": "3D rendering, photorealistic, blurry edges, messy cuts, low contrast",
+    "lora_scale": 0.8,
+    "text_encoder_scale": 0.6
   },
   "Irasutoya": {
     "path": "Kontext-Style/Irasutoya_lora",
     "weights": "Irasutoya_lora_weights.safetensors",
     "description": "Irasutoya illustration style",
     "prompt": "Transform into Irasutoya illustration style with simple shapes, friendly characters, clean lines, and bright cheerful colors",
-    "negative_prompt": "realistic, dark mood, complex details, harsh shadows, photographic"
+    "negative_prompt": "realistic, dark mood, complex details, harsh shadows, photographic",
+    "lora_scale": 0.85,
+    "text_encoder_scale": 0.65
   },
   "Fabric": {
     "path": "Kontext-Style/Fabric_lora",
     "weights": "Fabric_lora_weights.safetensors",
     "description": "Fabric texture art style",
     "prompt": "Transform into fabric art with textile textures, woven patterns, cloth materials, stitching details, and soft fabric appearance",
-    "negative_prompt": "hard surfaces, metallic, glass, photorealistic, sharp edges"
+    "negative_prompt": "hard surfaces, metallic, glass, photorealistic, sharp edges",
+    "lora_scale": 0.75,
+    "text_encoder_scale": 0.55
   },
   "Chinese_Ink": {
     "path": "Kontext-Style/Chinese_Ink_lora",
     "weights": "Chinese_Ink_lora_weights.safetensors",
     "description": "Chinese ink painting style",
     "prompt": "Transform into traditional Chinese ink painting style with flowing brushstrokes, gradient washes, minimalist composition, and poetic atmosphere",
-    "negative_prompt": "colorful, digital art, sharp lines, modern style, photorealistic"
+    "negative_prompt": "colorful, digital art, sharp lines, modern style, photorealistic",
+    "lora_scale": 0.7,
+    "text_encoder_scale": 0.5
   },
   "Origami": {
     "path": "Kontext-Style/Origami_lora",
     "weights": "Origami_lora_weights.safetensors",
     "description": "Origami paper folding style",
     "prompt": "Transform into origami paper art with geometric folds, angular shapes, paper texture, crisp edges, and folded paper aesthetic",
-    "negative_prompt": "smooth curves, organic shapes, realistic texture, soft materials"
+    "negative_prompt": "smooth curves, organic shapes, realistic texture, soft materials",
+    "lora_scale": 0.85,
+    "text_encoder_scale": 0.65
   },
   "Oil_Painting": {
     "path": "Kontext-Style/Oil_Painting_lora",
     "weights": "Oil_Painting_lora_weights.safetensors",
     "description": "Classic oil painting style",
     "prompt": "Transform into classic oil painting with visible brushstrokes, rich textures, layered paint, artistic interpretation, and traditional painting techniques",
-    "negative_prompt": "digital art, flat colors, sharp edges, photographic, modern style"
+    "negative_prompt": "digital art, flat colors, sharp edges, photographic, modern style",
+    "lora_scale": 0.75,
+    "text_encoder_scale": 0.55
   },
   "Poly": {
     "path": "Kontext-Style/Poly_lora",
     "weights": "Poly_lora_weights.safetensors",
     "description": "Low-poly 3D art style",
     "prompt": "Transform into low-poly 3D art with geometric facets, angular shapes, flat color planes, minimalist polygons, and stylized 3D look",
-    "negative_prompt": "high detail, smooth surfaces, realistic, curved edges, photorealistic"
+    "negative_prompt": "high detail, smooth surfaces, realistic, curved edges, photorealistic",
+    "lora_scale": 0.85,
+    "text_encoder_scale": 0.65
   },
   "LEGO": {
     "path": "Kontext-Style/LEGO_lora",
     "weights": "LEGO_lora_weights.safetensors",
     "description": "LEGO brick building style",
     "prompt": "Transform into LEGO brick construction with plastic block pieces, studs on top, bright colors, toy-like appearance, and modular brick design",
-    "negative_prompt": "organic shapes, realistic materials, soft edges, natural textures"
+    "negative_prompt": "organic shapes, realistic materials, soft edges, natural textures",
+    "lora_scale": 0.9,
+    "text_encoder_scale": 0.7
   },
   "Pop_Art": {
     "path": "Kontext-Style/Pop_Art_lora",
     "weights": "Pop_Art_lora_weights.safetensors",
     "description": "Pop art style",
     "prompt": "Transform into pop art style with bold colors, high contrast, halftone dots, graphic shapes, vibrant palette, and Warhol-inspired aesthetic",
-    "negative_prompt": "muted colors, realistic shading, subtle tones, photographic, soft gradients"
+    "negative_prompt": "muted colors, realistic shading, subtle tones, photographic, soft gradients",
+    "lora_scale": 0.8,
+    "text_encoder_scale": 0.6
   },
   "3D_Chibi": {
     "path": "Kontext-Style/3D_Chibi_lora",
     "weights": "3D_Chibi_lora_weights.safetensors",
     "description": "3D chibi character style",
     "prompt": "Transform into cute 3D chibi character with oversized head, big expressive eyes, tiny body proportions, rounded features, and adorable appearance",
-    "negative_prompt": "realistic proportions, mature features, detailed anatomy, photorealistic"
+    "negative_prompt": "realistic proportions, mature features, detailed anatomy, photorealistic",
+    "lora_scale": 0.8,
+    "text_encoder_scale": 0.6
   },
   "Pixel": {
     "path": "Kontext-Style/Pixel_lora",
     "weights": "Pixel_lora_weights.safetensors",
     "description": "Pixel art style",
     "prompt": "Transform into pixel art with visible pixels, limited color palette, retro game aesthetic, blocky shapes, and 8-bit or 16-bit style",
-    "negative_prompt": "smooth gradients, high resolution, photorealistic, modern graphics"
+    "negative_prompt": "smooth gradients, high resolution, photorealistic, modern graphics",
+    "lora_scale": 0.85,
+    "text_encoder_scale": 0.65
   },
   "Rick_Morty": {
     "path": "Kontext-Style/Rick_Morty_lora",
     "weights": "Rick_Morty_lora_weights.safetensors",
     "description": "Rick and Morty cartoon style",
     "prompt": "Transform into Rick and Morty cartoon style with exaggerated expressions, wobbly lines, sci-fi elements, comedic proportions, and Adult Swim aesthetic",
-    "negative_prompt": "realistic, serious tone, smooth lines, photographic, detailed shading"
+    "negative_prompt": "realistic, serious tone, smooth lines, photographic, detailed shading",
+    "lora_scale": 0.8,
+    "text_encoder_scale": 0.6
   },
   "Line": {
     "path": "Kontext-Style/Line_lora",
     "weights": "Line_lora_weights.safetensors",
     "description": "Line art drawing style",
     "prompt": "Transform into clean line art with bold outlines, minimal shading, clear contours, simple linework, and illustration style",
-    "negative_prompt": "photorealistic, full color, complex shading, painterly, blurry lines"
+    "negative_prompt": "photorealistic, full color, complex shading, painterly, blurry lines",
+    "lora_scale": 0.7,
+    "text_encoder_scale": 0.5
   },
   "Snoopy": {
     "path": "Kontext-Style/Snoopy_lora",
     "weights": "Snoopy_lora_weights.safetensors",
     "description": "Snoopy/Peanuts comic style",
     "prompt": "Transform into Peanuts comic style with simple rounded shapes, clean black outlines, minimal details, charming expressions, and Charles Schulz aesthetic",
-    "negative_prompt": "realistic, complex details, dark mood, photographic, detailed shading"
+    "negative_prompt": "realistic, complex details, dark mood, photographic, detailed shading",
+    "lora_scale": 0.8,
+    "text_encoder_scale": 0.6
   },
   "Picasso": {
     "path": "Kontext-Style/Picasso_lora",
     "weights": "Picasso_lora_weights.safetensors",
     "description": "Picasso cubist art style",
     "prompt": "Transform into Picasso cubist style with geometric fragmentation, multiple viewpoints, abstract shapes, angular forms, and modernist composition",
-    "negative_prompt": "realistic perspective, photographic, smooth curves, traditional composition"
+    "negative_prompt": "realistic perspective, photographic, smooth curves, traditional composition",
+    "lora_scale": 0.85,
+    "text_encoder_scale": 0.65
   },
   "American_Cartoon": {
     "path": "Kontext-Style/American_Cartoon_lora",
     "weights": "American_Cartoon_lora_weights.safetensors",
     "description": "American cartoon style",
     "prompt": "Transform into classic American cartoon style with bold outlines, exaggerated features, dynamic expressions, vibrant colors, and animated look",
-    "negative_prompt": "realistic, anime style, photographic, subtle expressions, muted colors"
+    "negative_prompt": "realistic, anime style, photographic, subtle expressions, muted colors",
+    "lora_scale": 0.8,
+    "text_encoder_scale": 0.6
   },
   "Macaron": {
     "path": "Kontext-Style/Macaron_lora",
     "weights": "Macaron_lora_weights.safetensors",
     "description": "Macaron sweet style",
     "prompt": "Transform into sweet macaron style with pastel colors, soft textures, cute aesthetic, dessert-like appearance, and sugary delicate look",
-    "negative_prompt": "dark colors, harsh textures, realistic, savory, rough surfaces"
+    "negative_prompt": "dark colors, harsh textures, realistic, savory, rough surfaces",
+    "lora_scale": 0.8,
+    "text_encoder_scale": 0.6
   },
   "Jojo": {
     "path": "Kontext-Style/Jojo_lora",
     "weights": "Jojo_lora_weights.safetensors",
     "description": "JoJo's Bizarre Adventure anime style",
     "prompt": "Transform into JoJo's Bizarre Adventure style with dramatic poses, intense expressions, bold linework, dynamic energy, powerful stance, and Stand aura effects",
-    "negative_prompt": "soft style, cute proportions, gentle expressions, realistic, blurry, weak poses"
+    "negative_prompt": "soft style, cute proportions, gentle expressions, realistic, blurry, weak poses",
+    "lora_scale": 0.8,
+    "text_encoder_scale": 0.6
   },
   "Vector": {
     "path": "Kontext-Style/Vector_lora",
     "weights": "Vector_lora_weights.safetensors",
     "description": "Vector graphic art style",
     "prompt": "Transform into vector graphic art with clean paths, smooth curves, flat colors, scalable design, geometric precision, and digital illustration style",
-    "negative_prompt": "raster texture, painterly, rough edges, photorealistic, grainy"
+    "negative_prompt": "raster texture, painterly, rough edges, photorealistic, grainy",
+    "lora_scale": 0.8,
+    "text_encoder_scale": 0.6
   },
   "Van_Gogh": {
     "path": "Kontext-Style/Van_Gogh_lora",
     "weights": "Van_Gogh_lora_weights.safetensors",
     "description": "Van Gogh impressionist style",
     "prompt": "Transform into Van Gogh impressionist style with swirling brushstrokes, expressive texture, vibrant colors, thick paint application, and post-impressionist aesthetic",
-    "negative_prompt": "photorealistic, smooth surfaces, flat colors, digital art, sharp edges"
+    "negative_prompt": "photorealistic, smooth surfaces, flat colors, digital art, sharp edges",
+    "lora_scale": 0.8,
+    "text_encoder_scale": 0.6
   },
   "Ghibli": {
     "path": "Kontext-Style/Ghibli_lora",
     "weights": "Ghibli_lora_weights.safetensors",
     "description": "Studio Ghibli animation style",
     "prompt": "Transform into Studio Ghibli animation style with whimsical characters, soft watercolor backgrounds, dreamy atmosphere, hand-drawn aesthetic, and storybook charm",
-    "negative_prompt": "realistic, dark mood, harsh lighting, photographic, modern 3D style"
+    "negative_prompt": "realistic, dark mood, harsh lighting, photographic, modern 3D style",
+    "lora_scale": 0.8,
+    "text_encoder_scale": 0.6
   },
   "Clay_Toy": {
     "path": "Kontext-Style/Clay_Toy_lora",
     "weights": "Clay_Toy_lora_weights.safetensors",
     "description": "Clay toy/claymation style",
     "prompt": "Transform into clay toy style with sculpted appearance, matte clay texture, handcrafted look, stop-motion aesthetic, and playful character design",
-    "negative_prompt": "smooth plastic, realistic skin, photographic, sharp details, glossy surfaces"
+    "negative_prompt": "smooth plastic, realistic skin, photographic, sharp details, glossy surfaces",
+    "lora_scale": 0.8,
+    "text_encoder_scale": 0.6
   },
   "Super_Pencil": {
     "path": "prithivMLmods/Super-Pencil-Flux-LoRA",
     "weights": "Pencil.safetensors",
     "description": "Refined pencil sketch style with clean linework and tonal depth",
     "prompt": "Simple Pencil, a realistic pencil drawing of the input image with expressive shading and clean contours",
-    "negative_prompt": "cartoonish, messy lines, low detail, exaggerated features, childish rendering"
+    "negative_prompt": "cartoonish, messy lines, low detail, exaggerated features, childish rendering",
+    "lora_scale": 0.7,
+    "text_encoder_scale": 0.5
   },
   "Poly_Futurism": {
     "path": "Kontext-Style/Poly_lora",
     "weights": "Poly_lora_weights.safetensors",
     "description": "Futuristic polygonal abstraction with faceted geometry and digital sculpture aesthetics",
     "prompt": "Transform into polygonal futuristic art style with low-poly geometry, sharp edges, and abstract composition",
-    "negative_prompt": "soft textures, organic shapes, photorealism, blurry edges, painterly strokes"
+    "negative_prompt": "soft textures, organic shapes, photorealism, blurry edges, painterly strokes",
+    "lora_scale": 0.85,
+    "text_encoder_scale": 0.65
   },
   "Glass_Prism": {
     "path": "drbaph/GlassPrism-kontext-LoRA",
     "weights": "GlassPrism.safetensors",
     "description": "Surreal refractive style with crystalline lighting and glass-like distortion",
     "prompt": "Make this object a glass prism with reflections, black background",
-    "negative_prompt": "flat lighting, matte surfaces, realism, low contrast, muddy colors"
+    "negative_prompt": "flat lighting, matte surfaces, realism, low contrast, muddy colors",
+    "lora_scale": 0.8,
+    "text_encoder_scale": 0.6
   },
   "Sketch": {
     "path": "Shakker-Labs/FLUX.1-Kontext-dev-LoRA-Sketch-Style",
     "weights": "FLUX-kontext-lora-sketch-style.safetensors",
     "description": "Sketch style LoRA trained on Flux.1-Kontext-dev",
     "prompt": "Convert real photos into sketches with clean linework and expressive shading. Styled with monochrome, sketch, greyscale tones with pencil texture and precise details.",
-    "negative_prompt": "photorealism, blurry edges, painterly strokes, low contrast"
+    "negative_prompt": "photorealism, blurry edges, painterly strokes, low contrast",
+    "lora_scale": 0.8,
+    "text_encoder_scale": 0.6
   },
   "American_Comic": {
     "path": "borozkut/Comic-Style-LoRA-FLUX.1dev",
     "weights": "comic-style-lora-000014.safetensors",
     "description": "Hand-drawn American comic style LoRA trained on FLUX.1-Kontext-dev. Captures bold linework, vibrant color blocking, and stylized shading.",
     "prompt": "c0m4i4, hand-drawn American comic style, bold ink lines, vibrant flat colors, stylized shading, expressive character design",
-    "negative_prompt": "photorealism, painterly strokes, low contrast, muddy colors, soft edges, realism artifacts"
+    "negative_prompt": "photorealism, painterly strokes, low contrast, muddy colors, soft edges, realism artifacts",
+    "lora_scale": 0.85,
+    "text_encoder_scale": 0.65
   },
   "Ink_Wash": {
     "path": "Kontext-Style/Chinese_Ink_lora",
     "weights": "Chinese_Ink_lora_weights.safetensors",
     "description": "Ink wash style LoRA trained on FLUX.1-Kontext-dev. Emulates traditional East Asian brushwork with fluid strokes and tonal gradients.",
     "prompt": "Eastern ink wash style, expressive brushwork, monochrome gradients, traditional sumi-e aesthetic. No harsh contrast, just flowing ink tones, ew elements, lots of breathing room and evokes stillness, impermanence, and introspection",
-    "negative_prompt": "photorealism, color, sharp edges, digital artifacts, high contrast"
+    "negative_prompt": "photorealism, color, sharp edges, digital artifacts, high contrast",
+    "lora_scale": 0.7,
+    "text_encoder_scale": 0.5
   }
 }

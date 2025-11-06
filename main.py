@@ -108,6 +108,9 @@ Default config: config/default_config.json (override with --config)
     parser.add_argument("--debug", action="store_true", help="Enable verbose debug logging")
     parser.add_argument("--log-file", type=str, help="Path to log file (default: auto-generated in ./logs/log_YYYYMMDD_HHMMSS.log)")
     parser.add_argument("--lora", type=str, help="Override LoRA adapter name")
+    parser.add_argument("--lora-scale", type=float, help="Override LoRA UNet strength (0.0-1.0, default from registry)")
+    parser.add_argument("--text-encoder-scale", type=float, help="Override text encoder strength (0.0-1.0, default from registry)")
+    parser.add_argument("--seed", type=int, help="Random seed for reproducibility (auto-generated if not specified)")
     parser.add_argument("--list-loras", action="store_true", help="List available LoRA adapters and exit")
     parser.add_argument("--batch", action="store_true", help="Process all images in input folder and subfolders")
     parser.add_argument("--file", type=str, nargs='?', const='', help="Process a specific image file (FQDN path or relative to input folder). If no path specified, uses input_image from config.")
@@ -426,8 +429,18 @@ def main():
             lora_cfg = {
                 "adapter_name": lora_key,
                 "path": lora_info["path"],
-                "weights": lora_info["weights"]
+                "weights": lora_info["weights"],
+                "lora_scale": lora_info.get("lora_scale", 0.8),
+                "text_encoder_scale": lora_info.get("text_encoder_scale", 0.6)
             }
+            
+            # Apply CLI overrides for LoRA strength if provided
+            if args.lora_scale is not None:
+                lora_cfg["lora_scale"] = args.lora_scale
+                logInfo(f"⚖️  CLI override - LoRA scale: {args.lora_scale}")
+            if args.text_encoder_scale is not None:
+                lora_cfg["text_encoder_scale"] = args.text_encoder_scale
+                logInfo(f"⚖️  CLI override - Text encoder scale: {args.text_encoder_scale}")
             
             # Override prompts with LoRA-specific prompts if available
             if "prompt" in lora_info:
@@ -531,10 +544,16 @@ def main():
         if not args.verbose:  # Don't show spinner if verbose (conflicts with output)
             spinner.start()
 
+        # Generate or use provided seed for reproducibility
+        import random
+        seed = args.seed if args.seed is not None else random.randint(0, 2**32 - 1)
+        logInfo(f"🎲 Seed: {seed}")
+        
         if args.debug:
             logDebug(f"Calling run_inference with prompt: '{config['prompt']}'")
             logDebug(f"Negative prompt: '{config['negative_prompt']}'")
             logDebug(f"Steps: {config['num_inference_steps']}, Guidance: {config['guidance_scale']}")
+            logDebug(f"Seed: {seed}")
 
         result = run_inference(
             pipeline,
@@ -542,7 +561,9 @@ def main():
             config["prompt"],
             config["negative_prompt"],
             config["num_inference_steps"],
-            config["guidance_scale"]
+            config["guidance_scale"],
+            seed,
+            device
         )
         output_image = result.images[0]  # extract the actual PIL image
 
