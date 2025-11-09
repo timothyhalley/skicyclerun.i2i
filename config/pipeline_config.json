@@ -7,17 +7,19 @@
       "cleanup",
       "metadata_extraction",
       "preprocessing",
-      "watermarking",
-      "lora_processing"
+      "lora_processing",
+      "post_lora_watermarking",
+      "s3_deployment"
     ]
   },
   "paths": {
-    "apple_photos_export": "/Volumes/MySSD/ImageLib/input",
-    "raw_input": "/Volumes/MySSD/ImageLib/input",
-    "preprocessed": "/Volumes/MySSD/ImageLib/preprocessed",
-    "output": "/Volumes/MySSD/ImageLib/output",
+    "apple_photos_export": "/Volumes/MySSD/ImageLib/phase1_extract/raw",
+    "raw_input": "/Volumes/MySSD/ImageLib/phase1_extract/raw",
+    "preprocessed": "/Volumes/MySSD/ImageLib/phase1_extract/scaled",
+    "watermarked": "/Volumes/MySSD/ImageLib/phase1_extract/watermarked",
+    "output": "/Volumes/MySSD/ImageLib/phase1_extract/ready_for_lora",
     "archive": "/Volumes/MySSD/ImageLib/archive",
-    "metadata_catalog": "/Volumes/MySSD/ImageLib/metadata/catalog.json"
+    "metadata_catalog": "/Volumes/MySSD/ImageLib/phase1_extract/metadata/catalog.json"
   },
   "export": {
     "enabled": true,
@@ -56,7 +58,7 @@
     "catalog_metadata": true
   },
   "watermark": {
-    "enabled": true,
+    "enabled": false,
     "format": "SkiCycleRun © {year} {astro_symbol} {location}",
     "year_offset": 1,
     "font": {
@@ -75,9 +77,30 @@
     "use_existing_config": true,
     "config_path": "config/default_config.json",
     "registry_path": "config/lora_registry.json",
-    "default_lora": "American_Cartoon",
     "batch_mode": true,
-    "preserve_metadata": true
+    "preserve_metadata": true,
+    "loras_to_process": [
+      "Afremov",
+      "Gorillaz",
+      "Origami",
+      "PencilDrawing",
+      "FractalGeometry",
+      "Poly_Futurism"
+    ],
+    "input_folder": "/Volumes/MySSD/ImageLib/phase1_extract/scaled",
+    "output_folder": "/Volumes/MySSD/ImageLib/phase2_lora/processed"
+  },
+  "s3_deployment": {
+    "enabled": true,
+    "bucket_name": "skicyclerun.lib",
+    "bucket_prefix": "albums",
+    "source_folder": "/Volumes/MySSD/ImageLib/phase2_lora/watermarked",
+    "aws_profile": "default",
+    "preserve_album_structure": true,
+    "content_type": "image/webp",
+    "cache_control": "max-age=31536000, public",
+    "storage_class": "STANDARD",
+    "dry_run": false
   },
   "logging": {
     "level": "INFO",

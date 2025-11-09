@@ -209,7 +209,7 @@ class PipelineRunner:
         watermark_app = WatermarkApplicator(self.config)
         
         preprocessed_path = Path(self.paths.get('preprocessed'))
-        output_path = Path(self.paths.get('output'))
+        watermarked_path = Path(self.paths.get('watermarked', self.paths.get('output')))
         
         watermarked_count = 0
         
@@ -245,10 +245,10 @@ class PipelineRunner:
                 
                 # Determine output directory (preserve album structure)
                 if album_name:
-                    output_dir = output_path / album_name
+                    output_dir = watermarked_path / album_name
                     output_dir.mkdir(parents=True, exist_ok=True)
                 else:
-                    output_dir = output_path
+                    output_dir = watermarked_path
                 
                 # Ensure unique output path
                 output_file = FilenameGenerator.ensure_unique_path(
@@ -290,10 +290,218 @@ class PipelineRunner:
         
         logInfo("🎨 Stage 6: Applying LoRA style filters")
         
-        # This integrates with existing main.py
-        # For now, log that it should be run separately
-        logInfo("💡 Run main.py with --batch to process images through LoRA pipeline")
-        logInfo("   Example: python main.py --lora American_Cartoon --batch")
+        lora_config = self.config.get('lora_processing', {})
+        loras_to_process = lora_config.get('loras_to_process', [])
+        
+        if not loras_to_process:
+            logWarn("⚠️  No LoRAs specified in config. Add 'loras_to_process' array to lora_processing config.")
+            return
+        
+        input_folder = lora_config.get('input_folder', self.paths.get('preprocessed'))
+        output_folder = lora_config.get('output_folder', '/Volumes/MySSD/ImageLib/phase2_lora/processed')
+        
+        logInfo(f"📁 Input: {input_folder}")
+        logInfo(f"📂 Output: {output_folder}")
+        logInfo(f"🎨 Processing {len(loras_to_process)} LoRA styles: {', '.join(loras_to_process)}")
+        
+        # Import main.py functions
+        import sys
+        import subprocess
+        
+        for lora_name in loras_to_process:
+            logInfo("=" * 80)
+            logInfo(f"🎨 STARTING LoRA PROCESSING: {lora_name}")
+            logInfo(f"📂 Input folder: {input_folder}")
+            logInfo(f"📂 Output folder: {output_folder}")
+            logInfo("=" * 80)
+            
+            # Call main.py with batch processing
+            cmd = [
+                sys.executable, 
+                'main.py',
+                '--lora', lora_name,
+                '--batch',
+                '--input-folder', input_folder,
+                '--output-folder', output_folder
+            ]
+            
+            try:
+                # Don't capture output - let it stream to console for spinners and progress
+                result = subprocess.run(cmd, check=True)
+                logInfo(f"\n✅ {lora_name} processing complete")
+            except subprocess.CalledProcessError as e:
+                logError(f"\n❌ {lora_name} processing failed: {e}")
+                # Continue with next LoRA instead of stopping
+        
+        logInfo(f"✅ LoRA processing complete - {len(loras_to_process)} styles processed")
+    
+    def run_post_lora_watermarking_stage(self):
+        """Stage 7: Apply watermarks to LoRA-processed images"""
+        logInfo("💧 Stage 7: Watermarking LoRA-processed images")
+        
+        lora_config = self.config.get('lora_processing', {})
+        lora_output = lora_config.get('output_folder', '/Volumes/MySSD/ImageLib/phase2_lora/processed')
+        watermark_output = '/Volumes/MySSD/ImageLib/phase2_lora/watermarked'
+        
+        logInfo(f"📁 Input: {lora_output}")
+        logInfo(f"📂 Output: {watermark_output}")
+        
+        # Call postprocess_lora.py
+        import sys
+        import subprocess
+        
+        cmd = [
+            sys.executable,
+            'postprocess_lora.py',
+            '--input', lora_output,
+            '--output', watermark_output
+        ]
+        
+        try:
+            # Don't capture output - let it stream to console for progress feedback
+            result = subprocess.run(cmd, check=True)
+            logInfo("\n✅ Post-LoRA watermarking complete")
+        except subprocess.CalledProcessError as e:
+            logError(f"\n❌ Post-LoRA watermarking failed: {e}")
+    
+    def run_s3_deployment_stage(self):
+        """Stage 8: Deploy watermarked images to AWS S3"""
+        if not self.config.get('s3_deployment', {}).get('enabled', False):
+            logInfo("⏭️  S3 deployment disabled, skipping...")
+            return
+        
+        logInfo("☁️  Stage 8: Deploying to AWS S3")
+        
+        s3_config = self.config.get('s3_deployment', {})
+        source_folder = Path(s3_config.get('source_folder', '/Volumes/MySSD/ImageLib/phase2_lora/watermarked'))
+        bucket_name = s3_config.get('bucket_name', 'skicyclerun.lib')
+        bucket_prefix = s3_config.get('bucket_prefix', 'albums')
+        aws_profile = s3_config.get('aws_profile', 'default')
+        dry_run = s3_config.get('dry_run', False)
+        
+        if not source_folder.exists():
+            logError(f"❌ Source folder not found: {source_folder}")
+            return
+        
+        logInfo(f"📁 Source: {source_folder}")
+        logInfo(f"☁️  Bucket: s3://{bucket_name}/{bucket_prefix}/")
+        logInfo(f"🔑 AWS Profile: {aws_profile}")
+        
+        if dry_run:
+            logInfo("🏃 DRY RUN MODE - No files will be uploaded")
+        
+        try:
+            import boto3
+            from botocore.exceptions import ClientError, NoCredentialsError
+            
+            # Initialize S3 client with profile
+            session = boto3.Session(profile_name=aws_profile)
+            s3_client = session.client('s3')
+            
+            # Verify bucket access
+            try:
+                s3_client.head_bucket(Bucket=bucket_name)
+                logInfo(f"✅ Bucket '{bucket_name}' is accessible")
+            except ClientError as e:
+                error_code = e.response['Error']['Code']
+                if error_code == '404':
+                    logError(f"❌ Bucket '{bucket_name}' does not exist")
+                elif error_code == '403':
+                    logError(f"❌ Access denied to bucket '{bucket_name}'")
+                else:
+                    logError(f"❌ Bucket access error: {e}")
+                return
+            
+            # Upload files
+            total_files = 0
+            uploaded_files = 0
+            skipped_files = 0
+            
+            # Walk through album/style folders
+            for album_dir in source_folder.iterdir():
+                if not album_dir.is_dir():
+                    continue
+                
+                album_name = album_dir.name
+                logInfo(f"\n📂 Processing album: {album_name}")
+                
+                # Find all image files in album (across all style folders if they exist)
+                image_files = []
+                if any(album_dir.iterdir()):
+                    # Check if album has style subfolders or direct images
+                    has_subfolders = any(p.is_dir() for p in album_dir.iterdir())
+                    
+                    if has_subfolders:
+                        # Album/Style/Images structure
+                        for style_dir in album_dir.iterdir():
+                            if style_dir.is_dir():
+                                for ext in ['.webp', '.jpg', '.jpeg', '.png']:
+                                    image_files.extend(style_dir.glob(f'*{ext}'))
+                    else:
+                        # Album/Images structure (no style subfolders)
+                        for ext in ['.webp', '.jpg', '.jpeg', '.png']:
+                            image_files.extend(album_dir.glob(f'*{ext}'))
+                
+                for image_file in image_files:
+                    total_files += 1
+                    
+                    # Construct S3 key: albums/[album_name]/[filename]
+                    s3_key = f"{bucket_prefix}/{album_name}/{image_file.name}"
+                    
+                    if dry_run:
+                        logInfo(f"  [DRY RUN] Would upload: {image_file.name} → s3://{bucket_name}/{s3_key}")
+                        uploaded_files += 1
+                        continue
+                    
+                    try:
+                        # Check if file already exists in S3
+                        try:
+                            s3_client.head_object(Bucket=bucket_name, Key=s3_key)
+                            skipped_files += 1
+                            continue
+                        except ClientError:
+                            pass  # File doesn't exist, proceed with upload
+                        
+                        # Upload file
+                        extra_args = {
+                            'ContentType': s3_config.get('content_type', 'image/webp'),
+                            'CacheControl': s3_config.get('cache_control', 'max-age=31536000, public'),
+                        }
+                        
+                        if s3_config.get('acl'):
+                            extra_args['ACL'] = s3_config.get('acl')
+                        
+                        if s3_config.get('storage_class'):
+                            extra_args['StorageClass'] = s3_config.get('storage_class')
+                        
+                        s3_client.upload_file(
+                            str(image_file),
+                            bucket_name,
+                            s3_key,
+                            ExtraArgs=extra_args
+                        )
+                        
+                        uploaded_files += 1
+                        
+                        if uploaded_files % 10 == 0:
+                            logInfo(f"  Uploaded {uploaded_files}/{total_files} files...")
+                        
+                    except ClientError as e:
+                        logError(f"  ❌ Failed to upload {image_file.name}: {e}")
+            
+            logInfo(f"\n✅ S3 deployment complete")
+            logInfo(f"📊 Total: {total_files} files | Uploaded: {uploaded_files} | Skipped: {skipped_files}")
+            logInfo(f"🌐 View at: https://{bucket_name}.s3.amazonaws.com/{bucket_prefix}/")
+            
+        except ImportError:
+            logError("❌ boto3 not installed. Install with: pip install boto3")
+        except NoCredentialsError:
+            logError(f"❌ AWS credentials not found for profile '{aws_profile}'")
+            logError("   Configure credentials with: aws configure --profile {aws_profile}")
+        except Exception as e:
+            logError(f"❌ S3 deployment failed: {e}")
+            import traceback
+            logError(traceback.format_exc())
     
     def run_pipeline(self, stages: List[str] = None):
         """Run the full pipeline or specific stages"""
@@ -309,7 +517,9 @@ class PipelineRunner:
             'metadata_extraction': self.run_metadata_extraction_stage,
             'preprocessing': self.run_preprocessing_stage,
             'watermarking': self.run_watermarking_stage,
-            'lora_processing': self.run_lora_processing_stage
+            'lora_processing': self.run_lora_processing_stage,
+            'post_lora_watermarking': self.run_post_lora_watermarking_stage,
+            's3_deployment': self.run_s3_deployment_stage
         }
         
         for stage in stages:

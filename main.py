@@ -104,6 +104,7 @@ Default config: config/default_config.json (override with --config)
     )
     parser.add_argument("--config", type=str, default="config/default_config.json", help="Path to config file")
     parser.add_argument("--dry-run", action="store_true", help="Skip inference, show planned actions (default when no action specified)")
+    parser.add_argument("--input-folder", type=str, help="Override input folder path (for --batch mode)")
     parser.add_argument("--output-folder", type=str, help="Override output folder path")
     parser.add_argument("--debug", action="store_true", help="Enable verbose debug logging")
     parser.add_argument("--log-file", type=str, help="Path to log file (default: auto-generated in ./logs/log_YYYYMMDD_HHMMSS.log)")
@@ -123,6 +124,32 @@ Default config: config/default_config.json (override with --config)
     return parser.parse_args()
 
 # ────────────────────────────────────────────────────────────────────────
+# Check if image has already been processed with this LoRA
+# ────────────────────────────────────────────────────────────────────────
+def is_already_processed(image_path, config, input_base_folder=None, lora_name=None):
+    """Check if output file already exists for this image and LoRA style"""
+    base_name = os.path.splitext(os.path.basename(image_path))[0]
+    style = lora_name if lora_name else 'default'
+    
+    # Determine output directory (same logic as save_result)
+    if input_base_folder and image_path.startswith(input_base_folder):
+        rel_path = os.path.relpath(os.path.dirname(image_path), input_base_folder)
+        if rel_path != ".":
+            output_subfolder = os.path.join(config["output_folder"], rel_path)
+        else:
+            output_subfolder = config["output_folder"]
+    else:
+        output_subfolder = config["output_folder"]
+    
+    # Check if any file with base_name and style exists (ignoring timestamp)
+    if os.path.exists(output_subfolder):
+        pattern = f"{base_name}_{style}_*.{config['output_format']}"
+        existing_files = glob(os.path.join(output_subfolder, pattern))
+        return len(existing_files) > 0
+    
+    return False
+
+# ────────────────────────────────────────────────────────────────────────
 # Save result image with timestamp (maintains subfolder structure)
 # ────────────────────────────────────────────────────────────────────────
 def save_result(image_path, result_image, config, input_base_folder=None, lora_name=None):
@@ -131,6 +158,9 @@ def save_result(image_path, result_image, config, input_base_folder=None, lora_n
     # Use lora_name if provided, otherwise use 'default'
     style = lora_name if lora_name else 'default'
     output_name = f"{base_name}_{style}_{timestamp}.{config['output_format']}"
+    
+    # Ensure base output folder exists
+    os.makedirs(config["output_folder"], exist_ok=True)
     
     # Maintain subfolder structure if processing batch from input folder
     if input_base_folder and image_path.startswith(input_base_folder):
@@ -229,6 +259,24 @@ def main():
         logging.root.setLevel(logging.CRITICAL + 1)  # Disable all logging
     
     # ─────────────────────────────────────────────────────────────
+    # Check for leftover stop file at startup
+    # ─────────────────────────────────────────────────────────────
+    stop_file = "/tmp/skicyclerun_stop"
+    if os.path.exists(stop_file):
+        logWarn("=" * 80)
+        logWarn(f"⚠️  WARNING: Leftover stop file detected: {stop_file}")
+        logWarn("⚠️  This may have been left from a previous interrupted run")
+        logWarn("⚠️  Removing it now to allow normal operation...")
+        logWarn("=" * 80)
+        try:
+            os.remove(stop_file)
+            logInfo(f"✅ Leftover stop file removed: {stop_file}")
+        except Exception as e:
+            logError(f"❌ Could not remove leftover stop file: {e}")
+            logError(f"💡 Manual removal needed: rm {stop_file}")
+            sys.exit(1)
+    
+    # ─────────────────────────────────────────────────────────────
     # Device selection with CPU fallback option (before computing effective settings)
     # ─────────────────────────────────────────────────────────────
     import torch
@@ -248,7 +296,7 @@ def main():
     # ─────────────────────────────────────────────────────────────
     # Resolve input path(s)
     if args.batch:
-        resolved_input = config.get("input_folder")
+        resolved_input = args.input_folder if args.input_folder else config.get("input_folder")
         input_type = "batch_folder"
     elif args.file is not None:  # --file was specified (even if empty)
         if args.file:  # Non-empty path provided
@@ -481,8 +529,8 @@ def main():
     # ─────────────────────────────────────────────────────────────
     input_base_folder = None
     if args.batch:
-        input_base_folder = config["input_folder"]
-        image_paths = get_image_files(config["input_folder"])
+        input_base_folder = resolved_input  # Use the resolved input (respects --input override)
+        image_paths = get_image_files(resolved_input)
         if args.debug:
             logDebug(f"Found {len(image_paths)} images in {input_base_folder} (including subfolders)")
     elif args.file is not None:
@@ -506,6 +554,36 @@ def main():
     
     for i, image_path in enumerate(image_paths, 1):
         file_start_time = time.time()
+        
+        # Check for stop file (graceful shutdown)
+        stop_file = "/tmp/skicyclerun_stop"
+        if os.path.exists(stop_file):
+            from datetime import datetime
+            stop_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            logInfo("\n" + "=" * 80)
+            logInfo(f"🛑 STOP FILE DETECTED: {stop_file}")
+            logInfo(f"⏰ Stop requested at: {stop_time}")
+            logInfo(f"📊 Progress: Completed {i-1}/{total_files} images")
+            logInfo("✅ Gracefully shutting down - current image processing will complete")
+            logInfo("💡 To resume: Run the same command again (already-processed images will be skipped)")
+            logInfo("=" * 80)
+            try:
+                os.remove(stop_file)
+                logInfo(f"🗑️  Stop file removed: {stop_file}")
+            except Exception as e:
+                logWarn(f"⚠️  Could not remove stop file {stop_file}: {e}")
+                logWarn(f"⚠️  Manual removal may be needed: rm {stop_file}")
+            logInfo(f"👋 Exiting gracefully at {stop_time}")
+            break
+        
+        # Check if already processed (for resume capability)
+        if is_already_processed(image_path, config, args.input_folder, lora_key if args.lora else None):
+            if total_files > 1:
+                logInfo("\n" + "─" * 80)
+                logInfo(f"⏭️  Skipping [{i}/{total_files}]: {os.path.basename(image_path)}")
+                logInfo(f"✅ Already processed with LoRA: {lora_key if args.lora else 'default'}")
+                logInfo("─" * 80)
+            continue
         
         # Print file header for batch processing
         if total_files > 1:

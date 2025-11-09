@@ -4,7 +4,7 @@ Complete photo management pipeline: Apple Photos export → metadata extraction 
 
 ## Architecture
 
-```
+```text
 Apple Photos
     ↓
 [Export Stage] → /Volumes/MySSD/ImageLib/input/[album_name]/
@@ -161,7 +161,7 @@ pip install Pillow requests
 
 After `metadata_extraction` stage, check:
 
-```
+```text
 /Volumes/MySSD/ImageLib/metadata/catalog.json
 ```
 
@@ -200,7 +200,7 @@ python main.py --lora Origami --file input.jpg --seed 987654321
 
 Check logs for seed values:
 
-```
+```text
 🎲 Seed: 1234567890
 ⚖️  LoRA strength - UNet: 0.85, Text Encoder: 0.65
 💬 Prompt: c0m4i4, hand-drawn American comic style...

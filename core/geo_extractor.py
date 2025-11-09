@@ -186,10 +186,31 @@ class GeoExtractor:
             'file_path': str(image_path),
             'file_name': Path(image_path).name,
             'timestamp': datetime.now().isoformat(),
+            'date_taken': None,
             'gps_coordinates': None,
             'location': None,
             'location_formatted': "Unknown Location"
         }
+        
+        # Extract date taken and GPS from EXIF
+        try:
+            image = Image.open(image_path)
+            exif_data = image._getexif()
+            
+            if exif_data:
+                # Extract DateTimeOriginal (when photo was taken)
+                for tag, value in exif_data.items():
+                    decoded = TAGS.get(tag, tag)
+                    if decoded == "DateTimeOriginal":
+                        try:
+                            # Format: "2023:01:15 14:30:45"
+                            dt = datetime.strptime(value, "%Y:%m:%d %H:%M:%S")
+                            metadata['date_taken'] = dt.isoformat()
+                        except:
+                            pass
+                        break
+        except Exception as e:
+            print(f"Warning: Could not extract EXIF date from {image_path}: {e}")
         
         # Extract GPS coordinates
         coords = self.extract_gps_from_exif(image_path)

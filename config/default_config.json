@@ -1,7 +1,7 @@
 {
-  "input_folder": "/Volumes/MySSD/ImageLib/input",
-  "output_folder": "/Volumes/MySSD/ImageLib/output",
-  "input_image": "/Volumes/MySSD/ImageLib/input/GymLady.jpeg",
+  "input_folder": "/Volumes/MySSD/ImageLib/phase1_extract/scaled",
+  "output_folder": "/Volumes/MySSD/ImageLib/phase2_lora/processed",
+  "input_image": "/Volumes/MySSD/ImageLib/phase1_extract/scaled/GymLady.jpeg",
   "output_format": "webp",
   "max_dim": 1024,
   "num_inference_steps": 24,

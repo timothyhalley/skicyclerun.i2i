@@ -74,6 +74,77 @@ class FilenameGenerator:
         return components
     
     @staticmethod
+    def extract_meaningful_location(location_dict: Dict) -> Optional[str]:
+        """Extract the most meaningful location component from display_name"""
+        if not location_dict:
+            return None
+        
+        display_name = location_dict.get('display_name', '')
+        city = location_dict.get('city')
+        country = location_dict.get('country')
+        
+        if not display_name:
+            return city or country
+        
+        # Split display_name by comma to get specific location parts
+        # Example: "Marina Bay, Marina East, Southeast, Singapore"
+        # Example: "Area B (Westside/Swan Lake/Kalamalka Lake), Regional District..."
+        parts = [p.strip() for p in display_name.split(',')]
+        
+        if not parts:
+            return city or country
+        
+        # Get the first part (most specific location)
+        first_part = parts[0]
+        
+        # Check for parentheses with more specific names
+        # "Area B (Westside/Swan Lake/Kalamalka Lake)" -> "Kalamalka Lake"
+        paren_match = re.search(r'\(([^)]+)\)', first_part)
+        if paren_match:
+            # Get content in parentheses and take the last item (most specific)
+            paren_content = paren_match.group(1)
+            # Split by / to get individual names
+            names = [n.strip() for n in paren_content.split('/')]
+            if names:
+                # Take the last one as it's usually most specific
+                specific_name = names[-1]
+                # Add city/country for context if available
+                if city and city not in specific_name:
+                    return f"{specific_name}_{city}"
+                elif country and country not in specific_name:
+                    return f"{specific_name}_{country}"
+                return specific_name
+        
+        # If first part is generic (Area, District, etc), use city
+        generic_prefixes = ['Area ', 'District ', 'Region ', 'County ']
+        if any(first_part.startswith(prefix) for prefix in generic_prefixes):
+            if city:
+                return city
+        
+        # Use first part if it looks meaningful
+        if len(first_part) > 3 and not first_part.isdigit():
+            return first_part
+        
+        # Fallback to city or country
+        return city or country
+    
+    @staticmethod
+    def extract_time_suffix(metadata: Dict) -> str:
+        """Extract HHMMSS time suffix from date_taken"""
+        date_taken = metadata.get('date_taken')
+        if not date_taken:
+            return ''
+        
+        try:
+            if isinstance(date_taken, str):
+                dt = datetime.fromisoformat(date_taken.replace('Z', '+00:00'))
+            else:
+                dt = date_taken
+            return dt.strftime('%H%M%S')
+        except:
+            return ''
+    
+    @staticmethod
     def generate_from_metadata(metadata: Dict, original_filename: str) -> str:
         """
         Generate a meaningful filename from metadata
@@ -92,27 +163,28 @@ class FilenameGenerator:
             # Keep original meaningful name
             return Path(original_filename).stem
         
-        # Build new name from metadata
+        # Extract location from metadata
+        location_dict = metadata.get('location', {})
+        if isinstance(location_dict, str):
+            # Fallback if location is just a string
+            location_name = location_dict
+        else:
+            location_name = FilenameGenerator.extract_meaningful_location(location_dict)
+        
+        # Build filename from location
         name_parts = []
         
-        # Extract location components
-        location = metadata.get('location', {})
-        if isinstance(location, dict):
-            location_str = location.get('formatted', '')
-        else:
-            location_str = str(location)
+        if location_name:
+            # Slugify the location name
+            slug = FilenameGenerator.slugify(location_name, 40)
+            name_parts.append(slug)
         
-        loc_components = FilenameGenerator.extract_location_components(location_str)
+        # Add time-of-day suffix if available
+        time_suffix = FilenameGenerator.extract_time_suffix(metadata)
+        if time_suffix:
+            name_parts.append(time_suffix)
         
-        # Add city if available
-        if loc_components['city']:
-            name_parts.append(FilenameGenerator.slugify(loc_components['city'], 30))
-        
-        # Add region if available and different from city
-        if loc_components['region'] and loc_components['region'] != loc_components['city']:
-            name_parts.append(FilenameGenerator.slugify(loc_components['region'], 20))
-        
-        # If no location, try to use date
+        # If no location or time, fallback to date
         if not name_parts:
             date_taken = metadata.get('date_taken')
             if date_taken:
@@ -121,7 +193,7 @@ class FilenameGenerator:
                         dt = datetime.fromisoformat(date_taken.replace('Z', '+00:00'))
                     else:
                         dt = date_taken
-                    name_parts.append(dt.strftime('%Y%m%d'))
+                    name_parts.append(dt.strftime('%Y%m%d_%H%M%S'))
                 except:
                     pass
         
@@ -129,14 +201,8 @@ class FilenameGenerator:
         if not name_parts:
             return Path(original_filename).stem
         
-        # Join parts
+        # Join parts with underscore
         new_name = '_'.join(name_parts)
-        
-        # Add original numeric suffix if it exists (to avoid duplicates)
-        original_stem = Path(original_filename).stem
-        suffix_match = re.search(r'(\d{3,})$', original_stem)
-        if suffix_match:
-            new_name = f"{new_name}_{suffix_match.group(1)}"
         
         return new_name
     
