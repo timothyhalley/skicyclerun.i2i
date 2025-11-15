@@ -130,8 +130,8 @@ class FilenameGenerator:
     
     @staticmethod
     def extract_time_suffix(metadata: Dict) -> str:
-        """Extract HHMMSS time suffix from date_taken"""
-        date_taken = metadata.get('date_taken')
+        """Extract HHMMSS time suffix from capture time (prefers UTC)."""
+        date_taken = metadata.get('date_taken_utc') or metadata.get('date_taken')
         if not date_taken:
             return ''
         
@@ -186,7 +186,7 @@ class FilenameGenerator:
         
         # If no location or time, fallback to date
         if not name_parts:
-            date_taken = metadata.get('date_taken')
+            date_taken = metadata.get('date_taken_utc') or metadata.get('date_taken')
             if date_taken:
                 try:
                     if isinstance(date_taken, str):

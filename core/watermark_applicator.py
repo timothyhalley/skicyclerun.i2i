@@ -1,10 +1,20 @@
-"""
-Watermark Applicator
-Applies text watermarks to images with configurable styling
+"""Watermark Applicator
+Applies text watermarks to images with configurable styling.
+
+Enhancements (shrink-to-fit):
+- If configured fit_mode == 'shrink_to_fit', we will iteratively reduce
+    the font size until the watermark text fits within
+    (image_width * max_width_percent) minus horizontal margins.
+- Config keys supported (under watermark.font):
+        size:        starting (desired) size
+        min_size:    lowest size we will allow (default 20)
+        max_width_percent: percentage (0-100) of image width allowed (default 65)
+        fit_mode:    'shrink_to_fit' or 'none'
 """
 from PIL import Image, ImageDraw, ImageFont
 from pathlib import Path
 from typing import Dict, Tuple
+import sys
 
 class WatermarkApplicator:
     def __init__(self, config: Dict):
@@ -13,43 +23,54 @@ class WatermarkApplicator:
         self.font_config = self.watermark_config.get('font', {})
         self.position = self.watermark_config.get('position', 'bottom_right')
         self.margin = self.watermark_config.get('margin', {'x': 20, 'y': 20})
+        # Extended config
+        self.fit_mode = self.font_config.get('fit_mode', 'shrink_to_fit')
+        self.min_size = int(self.font_config.get('min_size', 20))
+        self.max_width_percent = float(self.font_config.get('max_width_percent', 65))
+        # Debug / verbose control (default off)
+        self.debug = bool(self.watermark_config.get('debug', False))
     
-    def _get_font(self, image_width: int, emoji_compatible: bool = False):
-        """Get font with size scaled to image width"""
-        base_size = self.font_config.get('size', 24)
-        # Scale font size based on image width (base: 1920px)
-        scaled_size = int(base_size * (image_width / 1920.0))
-        scaled_size = max(12, min(scaled_size, 72))  # Clamp between 12-72
-        
-        font_family = self.font_config.get('family', 'Asimovian')
-        
-        # Try fonts in order of preference
-        font_paths = []
-        
-        if emoji_compatible:
-            # For emoji/symbols, use Apple Color Emoji
-            font_paths = [
-                "/System/Library/Fonts/Apple Color Emoji.ttc",
-                "/System/Library/Fonts/Supplemental/AppleColorEmoji.ttf"
-            ]
-        else:
-            # For main text, try Asimovian or fallbacks
-            font_paths = [
-                f"/System/Library/Fonts/{font_family}.ttc",
-                f"/Library/Fonts/{font_family}.ttf",
-                "/System/Library/Fonts/Supplemental/Courier New.ttf",
-                "/System/Library/Fonts/Supplemental/Arial.ttf"
-            ]
+    def _get_font(self, font_size: int):
+        """Load a font of a specific size using fallback chain."""
+        # Try multiple font options in order of preference
+        font_paths = [
+            "/System/Library/Fonts/Courier New Bold.ttf",
+            "/System/Library/Fonts/Supplemental/Courier New Bold.ttf",
+            "/System/Library/Fonts/Supplemental/Courier New.ttf",
+            "/System/Library/Fonts/Helvetica.ttc",
+            "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+            "/System/Library/Fonts/Supplemental/Arial.ttf"
+        ]
         
         for font_path in font_paths:
             try:
-                font = ImageFont.truetype(font_path, scaled_size)
+                font = ImageFont.truetype(font_path, font_size)
                 return font
             except:
                 continue
         
         # Last resort: default font
         return ImageFont.load_default()
+
+    def _shrink_to_fit(self, draw: ImageDraw.ImageDraw, text: str, image_width: int) -> ImageFont.FreeTypeFont:
+        """Shrink font size until text fits allowed width or min_size reached."""
+        desired_size = int(self.font_config.get('size', 32))
+        font_size = desired_size
+        font = self._get_font(font_size)
+        margin_x = self.margin.get('x', 20)
+        allowed_width = int(image_width * (self.max_width_percent / 100.0)) - margin_x
+        if allowed_width <= 0:
+            allowed_width = image_width - margin_x
+        while font_size > self.min_size:
+            bbox = draw.textbbox((0, 0), text, font=font)
+            text_width = bbox[2] - bbox[0]
+            if text_width <= allowed_width:
+                break
+            font_size -= 1
+            font = self._get_font(font_size)
+        if self.debug:
+            print(f"[WatermarkApplicator] fit_mode=shrink_to_fit desired={desired_size} final={font_size} allowed_width={allowed_width}", file=sys.stderr)
+        return font
     
     def _get_text_position(self, image_size: Tuple[int, int], text_bbox: Tuple[int, int, int, int]) -> Tuple[int, int]:
         """Calculate text position based on configuration"""
@@ -83,7 +104,7 @@ class WatermarkApplicator:
         return (x, y)
     
     def apply_watermark(self, image_path: str, watermark_text: str, output_path: str):
-        """Apply watermark to image"""
+        """Apply watermark to image with optional shrink-to-fit behavior."""
         # Load image
         image = Image.open(image_path)
         
@@ -95,8 +116,12 @@ class WatermarkApplicator:
         overlay = Image.new('RGBA', image.size, (0, 0, 0, 0))
         draw = ImageDraw.Draw(overlay)
         
-        # Get font
-        font = self._get_font(image.width)
+        # Get font (fitting if enabled)
+        if self.fit_mode == 'shrink_to_fit':
+            font = self._shrink_to_fit(draw, watermark_text, image.width)
+        else:
+            font_size = int(self.font_config.get('size', 32))
+            font = self._get_font(font_size)
         
         # Get text bounding box
         bbox = draw.textbbox((0, 0), watermark_text, font=font)
@@ -117,8 +142,12 @@ class WatermarkApplicator:
             fill=text_color,
             stroke_width=stroke_width,
             stroke_fill=stroke_color,
-            embedded_color=True  # Enable emoji color rendering
+            embedded_color=True
         )
+        final_bbox = draw.textbbox((0, 0), watermark_text, font=font)
+        final_width = final_bbox[2] - final_bbox[0]
+        if self.debug:
+            print(f"[WatermarkApplicator] final_text_width={final_width} image_width={image.width}", file=sys.stderr)
         
         # Composite overlay onto original image
         watermarked = Image.alpha_composite(image, overlay)

@@ -75,6 +75,12 @@ results/
 *.swo
 *~
 
+# Debug output
+debug/
+debug_*.py
+debug_*.txt
+debug_*.png
+
 # Environment variables
 .env
 .env.local

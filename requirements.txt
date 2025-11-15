@@ -22,6 +22,7 @@ tokenizers
 # Image processing and utilities
 pillow
 numpy
+timezonefinder
 
 # System monitoring and utilities
 psutil

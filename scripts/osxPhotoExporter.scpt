@@ -10,7 +10,7 @@ on run argv
 		set baseExportPath to item 1 of argv
 	else
 		-- Default to external SSD location
-		set baseExportPath to "/Volumes/MySSD/ImageLib/phase1_extract/raw"
+		set baseExportPath to "/Volumes/MySSD/skicyclerun.i2i/images/raw"
 		
 		-- Check if default path exists, if not offer to choose location
 		try

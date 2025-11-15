@@ -3,39 +3,58 @@ Pipeline Task Runner
 Orchestrates the full photo processing pipeline from Apple Photos export to LoRA processing
 """
 import json
+import time
 import subprocess
 from pathlib import Path
 from datetime import datetime
+from utils.time_utils import utc_now_iso_z
 from typing import Dict, List
 from core.geo_extractor import GeoExtractor
 from core.watermark_generator import WatermarkGenerator
 from core.watermark_applicator import WatermarkApplicator
 from core.image_preprocessor import ImagePreprocessor
+from core.master_store import MasterStore
 from utils.logger import logInfo, logError, logWarn
 
 
 class PipelineRunner:
-    def __init__(self, config_path: str = "config/pipeline_config.json"):
+    def __init__(
+        self,
+        config_path: str = "config/pipeline_config.json",
+        cache_only_geocode: bool | None = None,
+        sweep_path_contains: str | None = None,
+        sweep_limit: int | None = None,
+        sweep_only_missing: bool = False,
+        sweep_skip_poi: bool = False,
+        sweep_skip_heading: bool = False,
+        sweep_pulse_sec: int = 5,
+    ):
         self.config_path = config_path
         self.config = self._load_config()
         self.paths = self.config.get('paths', {})
         self.stages = self.config.get('pipeline', {}).get('stages', [])
         self.metadata_catalog = {}
+        master_path = self.paths.get('master_catalog')
+        self.master_store: MasterStore | None = MasterStore(master_path) if master_path else None
+        # Optional override for geocoding cache-only mode
+        if cache_only_geocode is not None:
+            self.config.setdefault('metadata_extraction', {}).setdefault('geocoding', {})['cache_only'] = bool(cache_only_geocode)
+        # Sweep filters
+        self.sweep_path_contains = sweep_path_contains
+        self.sweep_limit = sweep_limit
+        self.sweep_only_missing = sweep_only_missing
+        self.sweep_skip_poi = sweep_skip_poi
+        self.sweep_skip_heading = sweep_skip_heading
+        self.sweep_pulse_sec = max(1, int(sweep_pulse_sec))
         
     def _load_config(self) -> Dict:
         """Load pipeline configuration"""
         with open(self.config_path, 'r') as f:
             return json.load(f)
     
-    def _save_metadata_catalog(self):
-        """Save metadata catalog to JSON"""
-        catalog_path = Path(self.paths.get('metadata_catalog', 'metadata/catalog.json'))
-        catalog_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        with open(catalog_path, 'w') as f:
-            json.dump(self.metadata_catalog, f, indent=2)
-        
-        logInfo(f"💾 Saved metadata catalog: {catalog_path}")
+    # Legacy catalog removed; MasterStore is authoritative.
+
+    # Master catalog rebuild removed; using incremental MasterStore updates instead.
     
     def run_export_stage(self):
         """Stage 1: Export photos from Apple Photos"""
@@ -100,15 +119,7 @@ class PipelineRunner:
         
         logInfo("🗺️  Stage 3: Extracting metadata and geolocation")
         
-        # Load existing catalog to check for duplicates
-        catalog_path = Path(self.paths.get('metadata_catalog', 'metadata/catalog.json'))
-        if catalog_path.exists():
-            try:
-                with open(catalog_path, 'r') as f:
-                    self.metadata_catalog = json.load(f)
-                logInfo(f"📖 Loaded existing catalog: {len(self.metadata_catalog)} entries")
-            except Exception as e:
-                logWarn(f"⚠️  Could not load existing catalog: {e}")
+        # Legacy catalog retired; skipping reads.
         
         geo_extractor = GeoExtractor(self.config)
         raw_input_path = Path(self.paths.get('raw_input'))
@@ -126,14 +137,29 @@ class PipelineRunner:
         for idx, image_path in enumerate(image_files, 1):
             image_path_str = str(image_path)
             
-            # Skip if already in catalog (check for raw metadata without processed_size)
-            if image_path_str in self.metadata_catalog and 'gps_coordinates' in self.metadata_catalog[image_path_str]:
+            # Skip if master_store already recorded metadata_extraction for this raw path
+            if self.master_store and self.master_store.has_stage(image_path_str, 'metadata_extraction'):
                 skipped_count += 1
                 continue
             
             try:
                 metadata = geo_extractor.extract_metadata(image_path_str)
-                self.metadata_catalog[image_path_str] = metadata
+                # In-memory legacy tracking removed; write only to master
+                # Write directly to master_store
+                if self.master_store:
+                    patch = {
+                        "exif": {
+                            "date_taken": metadata.get("date_taken"),
+                            "date_taken_utc": metadata.get("date_taken_utc"),
+                        },
+                        "gps": metadata.get("gps_coordinates"),
+                        "location": metadata.get("location"),
+                        "location_formatted": metadata.get("location_formatted"),
+                        "landmarks": metadata.get("landmarks"),
+                        "heading": metadata.get("heading"),
+                        "extracted_timestamp": metadata.get("timestamp"),
+                    }
+                    self.master_store.update_entry(image_path_str, patch, stage='metadata_extraction')
                 new_count += 1
                 
                 if new_count % 10 == 0:
@@ -142,8 +168,10 @@ class PipelineRunner:
             except Exception as e:
                 logWarn(f"⚠️  Failed to extract metadata from {image_path.name}: {e}")
         
-        self._save_metadata_catalog()
-        logInfo(f"✅ Metadata extraction complete - {new_count} new, {skipped_count} already cataloged")
+        logInfo(f"✅ Metadata extraction complete - {new_count} new, {skipped_count} skipped (existing)")
+        # No rebuild: master_store already incrementally updated
+
+    # Master catalog stage removed; no longer needed with MasterStore.
     
     def run_preprocessing_stage(self):
         """Stage 4: Scale and optimize images"""
@@ -157,16 +185,34 @@ class PipelineRunner:
         raw_input_path = self.paths.get('raw_input')
         preprocessed_path = self.paths.get('preprocessed')
         
-        # Load existing metadata catalog if available
-        catalog_path = Path(self.paths.get('metadata_catalog', 'metadata/catalog.json'))
+        # Build a combined existing catalog from MasterStore for skipping and metadata merge
         existing_catalog = {}
-        if catalog_path.exists():
-            try:
-                with open(catalog_path, 'r') as f:
-                    existing_catalog = json.load(f)
-                logInfo(f"📖 Loaded existing metadata catalog: {len(existing_catalog)} entries")
-            except Exception as e:
-                logWarn(f"⚠️  Could not load existing catalog: {e}")
+        if self.master_store:
+            for fp, entry in self.master_store.list_paths().items():
+                # preprocessed entries for skip
+                if entry.get("preprocessing") and entry.get("type") == "preprocessed":
+                    # mimic preprocessor expected shape, include sizes if available
+                    pre = entry.get("preprocessing", {})
+                    existing_catalog[fp] = {
+                        'processed_size': pre.get('processed_size'),
+                        'output_path': pre.get('output_path'),
+                        'input_path': pre.get('input_path'),
+                        'original_file_size': pre.get('original_file_size'),
+                        'processed_file_size': pre.get('processed_file_size'),
+                        'original_format': pre.get('original_format'),
+                        'output_format': pre.get('output_format'),
+                        'quality': pre.get('quality'),
+                    }
+                # raw metadata to merge into processing output
+                if 'metadata_extraction' in entry.get('pipeline', {}).get('stages', []):
+                    # Provide date/location fields under raw path key
+                    raw_path = fp
+                    existing_catalog[raw_path] = {
+                        'date_taken': entry.get('exif', {}).get('date_taken'),
+                        'date_taken_utc': entry.get('exif', {}).get('date_taken_utc'),
+                        'location_formatted': entry.get('location_formatted'),
+                        'location': entry.get('location'),
+                    }
         
         # Preprocess all images
         processed_catalog = preprocessor.preprocess_directory(
@@ -175,9 +221,37 @@ class PipelineRunner:
             existing_catalog
         )
         
-        # Merge catalogs
-        self.metadata_catalog.update(processed_catalog)
-        self._save_metadata_catalog()
+        # No legacy catalog writes
+
+        # Update master store entries per processed output
+        if self.master_store:
+            for out_path, meta in processed_catalog.items():
+                section = {
+                    "input_path": meta.get("input_path"),
+                    "output_path": meta.get("output_path"),
+                    "original_size": meta.get("original_size"),
+                    "processed_size": meta.get("processed_size"),
+                    "original_format": meta.get("original_format"),
+                    "output_format": meta.get("output_format"),
+                    "original_file_size": meta.get("original_file_size"),
+                    "processed_file_size": meta.get("processed_file_size"),
+                    "size_reduction_percent": meta.get("size_reduction_percent"),
+                    "processed_timestamp": meta.get("processed_timestamp"),
+                    "quality": meta.get("quality"),
+                }
+                patch = {
+                    "type": "preprocessed",
+                    "source_path": meta.get("input_path"),
+                    "preprocessing": section,
+                }
+                # Carry through helpful top-level fields if present
+                if meta.get('location_formatted'):
+                    patch['location_formatted'] = meta.get('location_formatted')
+                if meta.get('date_taken'):
+                    patch.setdefault('exif', {})['date_taken'] = meta.get('date_taken')
+                if meta.get('date_taken_utc'):
+                    patch.setdefault('exif', {})['date_taken_utc'] = meta.get('date_taken_utc')
+                self.master_store.update_entry(out_path, patch, stage='preprocessing')
         
         logInfo("✅ Preprocessing complete")
     
@@ -189,19 +263,9 @@ class PipelineRunner:
         
         logInfo("💧 Stage 5: Applying watermarks")
         
-        # Load existing metadata catalog if not already loaded
-        if not self.metadata_catalog:
-            catalog_path = Path(self.paths.get('metadata_catalog', 'metadata/catalog.json'))
-            if catalog_path.exists():
-                try:
-                    with open(catalog_path, 'r') as f:
-                        self.metadata_catalog = json.load(f)
-                    logInfo(f"📖 Loaded metadata catalog: {len(self.metadata_catalog)} entries")
-                except Exception as e:
-                    logWarn(f"⚠️  Could not load metadata catalog: {e}")
-        
-        if not self.metadata_catalog:
-            logWarn("⚠️  No metadata catalog found. Run metadata_extraction and preprocessing stages first.")
+        # Build list of preprocessed images directly from filesystem
+        if not self.master_store:
+            logWarn("⚠️  MasterStore not configured; cannot run watermarking stage reliably.")
             return
         
         from utils.filename_generator import FilenameGenerator
@@ -213,15 +277,14 @@ class PipelineRunner:
         
         watermarked_count = 0
         
-        # Process images from metadata catalog
-        for image_path_str, metadata in self.metadata_catalog.items():
+        # Discover preprocessed images and watermark using MasterStore metadata
+        image_files = list(preprocessed_path.glob('**/*.webp')) + \
+                      list(preprocessed_path.glob('**/*.jpg')) + \
+                      list(preprocessed_path.glob('**/*.jpeg')) + \
+                      list(preprocessed_path.glob('**/*.png'))
+        for image_path in image_files:
             try:
-                # Check if this is a preprocessed image path
-                image_path = Path(image_path_str)
-                
-                # Skip if not preprocessed (no processed_size field means it's from raw input)
-                if 'processed_size' not in metadata:
-                    continue
+                image_path_str = str(image_path)
                 
                 if not image_path.exists():
                     logWarn(f"⚠️  Image not found: {image_path}")
@@ -238,10 +301,20 @@ class PipelineRunner:
                     pass
                 
                 # Generate smart filename
-                new_filename_stem = FilenameGenerator.generate_from_metadata(
-                    metadata,
-                    image_path.stem
-                )
+                # Fetch metadata from master store; fallback to source entry if needed
+                entry = self.master_store.get(image_path_str)
+                src_entry = None
+                if entry and not entry.get('location_formatted') and entry.get('source_path'):
+                    src_entry = self.master_store.get(entry.get('source_path'))
+                e = entry or {}
+                s = src_entry or {}
+                meta_for_wm = {
+                    'location_formatted': e.get('location_formatted') or s.get('location_formatted'),
+                    'date_taken_utc': (e.get('exif') or {}).get('date_taken_utc') or (s.get('exif') or {}).get('date_taken_utc'),
+                    'date_taken': (e.get('exif') or {}).get('date_taken') or (s.get('exif') or {}).get('date_taken'),
+                    'landmarks': e.get('landmarks') or s.get('landmarks')
+                }
+                new_filename_stem = FilenameGenerator.generate_from_metadata(meta_for_wm, image_path.stem)
                 
                 # Determine output directory (preserve album structure)
                 if album_name:
@@ -257,13 +330,13 @@ class PipelineRunner:
                     image_path.suffix
                 )
                 
-                # Skip if output file already exists
-                if output_file.exists():
+                # Skip if output file already exists or recorded in master
+                if output_file.exists() or (self.master_store and self.master_store.has_stage(str(output_file), 'watermarking')):
                     watermarked_count += 1
                     continue
                 
                 # Generate watermark text
-                watermark_text = watermark_gen.generate_from_metadata(metadata)
+                watermark_text = watermark_gen.generate_from_metadata(meta_for_wm)
                 
                 # Apply watermark
                 watermark_app.apply_watermark(
@@ -271,6 +344,31 @@ class PipelineRunner:
                     watermark_text,
                     str(output_file)
                 )
+
+                # Record in master store
+                if self.master_store:
+                    font_cfg = self.config.get('watermark', {}).get('font', {})
+                    wm_block = {
+                        "text": watermark_text,
+                        "font": {
+                            "family": font_cfg.get("family"),
+                            "size": font_cfg.get("size"),
+                            "min_size": font_cfg.get("min_size"),
+                            "max_width_percent": font_cfg.get("max_width_percent"),
+                            "fit_mode": font_cfg.get("fit_mode"),
+                        },
+                        "position": self.config.get('watermark', {}).get('position'),
+                        "margin": self.config.get('watermark', {}).get('margin'),
+                        "applied_at": utc_now_iso_z(),
+                        "input_path": str(image_path),
+                        "output_path": str(output_file),
+                    }
+                    patch = {
+                        "type": "watermarked",
+                        "source_path": str(image_path),
+                        "watermark": wm_block,
+                    }
+                    self.master_store.update_entry(str(output_file), patch, stage='watermarking')
                 
                 watermarked_count += 1
                 
@@ -281,6 +379,154 @@ class PipelineRunner:
                 logWarn(f"⚠️  Failed to watermark {image_path.name}: {e}")
         
         logInfo(f"✅ Watermarking complete - {watermarked_count} images processed")
+
+    def run_geocode_sweep_stage(self):
+        """Stage: Sweep master.json and fill missing locations for entries with GPS.
+
+        Forces network geocoding (ignores cache_only) and propagates location
+        to derived entries that reference a source via source_path.
+        Also enriches EXIF heading and nearby POI landmarks when enabled.
+        """
+        logInfo("🌍 Geocode Sweep: Filling missing locations from GPS")
+        if not self.master_store:
+            logWarn("⚠️  MasterStore not configured; cannot run geocode sweep.")
+            return
+
+        # Prepare a GeoExtractor with cache_only disabled
+        sweep_config = json.loads(json.dumps(self.config))
+        sweep_config.setdefault('metadata_extraction', {}).setdefault('geocoding', {})['cache_only'] = False
+        extractor = GeoExtractor(sweep_config)
+
+        data = self.master_store.list_paths()
+        # Build reverse index of children by source_path
+        children_by_source: Dict[str, list] = {}
+        for p, e in data.items():
+            src = e.get('source_path')
+            if src:
+                children_by_source.setdefault(src, []).append(p)
+
+        updated = 0
+        skipped = 0
+        no_gps = 0
+
+        processed = 0
+        total = len(data)
+        last_pulse = time.time()
+        logInfo(f"🔎 Sweep settings — poi_enabled: {getattr(extractor,'poi_enabled', False)}, only_missing: {self.sweep_only_missing}, path_filter: {bool(self.sweep_path_contains)}, limit: {self.sweep_limit or 'none'}")
+        try:
+            for p, e in list(data.items()):
+                # Apply path filter if provided
+                if self.sweep_path_contains and self.sweep_path_contains not in p:
+                    continue
+                gps = e.get('gps')
+                has_loc = bool(e.get('location_formatted'))
+                if not gps:
+                    no_gps += 1
+                    continue
+                # We still may enrich heading/POIs even if location already present
+                lat = gps.get('lat')
+                lon = gps.get('lon')
+                if lat is None or lon is None:
+                    no_gps += 1
+                    continue
+                try:
+                    patch = {}
+                    # Only-missing shortcut: if nothing missing and flag set, skip
+                    if self.sweep_only_missing and all([
+                        has_loc,
+                        bool(e.get('heading')) or self.sweep_skip_heading,
+                        bool(e.get('landmarks')) or self.sweep_skip_poi
+                    ]):
+                        skipped += 1
+                        continue
+
+                    # Always backfill location if missing
+                    if not has_loc:
+                        loc = extractor.reverse_geocode(lat, lon)
+                        if loc:
+                            formatted = extractor.format_location(loc)
+                            patch.update({"location": loc, "location_formatted": formatted})
+
+                    # Extract heading from EXIF if missing
+                    heading_block = None
+                    if not self.sweep_skip_heading:
+                        try:
+                            from PIL import Image
+                            from PIL.ExifTags import TAGS, GPSTAGS
+                            import os
+                            if os.path.exists(p):
+                                img = Image.open(p)
+                                exif = img._getexif()
+                                gps_info = {}
+                                if exif:
+                                    for tag, value in exif.items():
+                                        decoded = TAGS.get(tag, tag)
+                                        if decoded == 'GPSInfo':
+                                            for gps_tag in value:
+                                                sub_decoded = GPSTAGS.get(gps_tag, gps_tag)
+                                                gps_info[sub_decoded] = value[gps_tag]
+                                def _convert_rational(val):
+                                    if val is None:
+                                        return None
+                                    try:
+                                        if isinstance(val, tuple) and len(val)==2:
+                                            num, den = val
+                                            den = den or 1
+                                            return float(num)/float(den)
+                                        return float(val)
+                                    except Exception:
+                                        return None
+                                def _deg_to_cardinal(deg):
+                                    if deg is None:
+                                        return None
+                                    dirs = ["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"]
+                                    idx = int((deg % 360) / 22.5 + 0.5) % 16
+                                    return dirs[idx]
+                                if gps_info and not e.get('heading'):
+                                    hdg = _convert_rational(gps_info.get('GPSImgDirection'))
+                                    if hdg is not None:
+                                        heading_block = {
+                                            'degrees': hdg,
+                                            'cardinal': _deg_to_cardinal(hdg),
+                                            'ref': gps_info.get('GPSImgDirectionRef')
+                                        }
+                                        patch['heading'] = heading_block
+                        except Exception:
+                            pass
+
+                    # Fetch POIs if enabled and missing
+                    if not self.sweep_skip_poi and getattr(extractor, 'poi_enabled', False) and not e.get('landmarks'):
+                        heading_deg = (heading_block or e.get('heading') or {}).get('degrees')
+                        pois = extractor.fetch_pois(lat, lon, heading_deg=heading_deg)
+                        if pois:
+                            patch['landmarks'] = pois
+
+                    # Write updates if any
+                    if patch:
+                        self.master_store.update_entry(p, patch, stage='geocode_sweep')
+                        # Propagate to children derived from this source
+                        for child in children_by_source.get(p, []):
+                            self.master_store.update_entry(child, patch, stage='geocode_sweep')
+                        updated += 1
+                        if updated % 25 == 0:
+                            logInfo(f"  ✓ Updated {updated} entries with locations/POIs/heading...")
+                    else:
+                        skipped += 1
+                    processed += 1
+                    # Heartbeat pulse
+                    now = time.time()
+                    if now - last_pulse >= self.sweep_pulse_sec:
+                        logInfo(f"⏳ Sweep progress: {processed}/{total} processed | updated:{updated} skipped:{skipped} no_gps:{no_gps}")
+                        last_pulse = now
+                    if self.sweep_limit is not None and processed >= self.sweep_limit:
+                        logInfo(f"⏹️  Sweep limit reached: processed {processed} entries")
+                        break
+                except Exception as ex:
+                    logWarn(f"⚠️  Geocode sweep failed for {p}: {ex}")
+        except KeyboardInterrupt:
+            logWarn("🛑 Geocode sweep interrupted by user (Ctrl+C). Partial updates saved.")
+
+        logInfo(f"✅ Geocode sweep complete — updated: {updated}, skipped: {skipped}, no GPS: {no_gps}")
     
     def run_lora_processing_stage(self):
         """Stage 6: Apply LoRA style filters"""
@@ -298,7 +544,7 @@ class PipelineRunner:
             return
         
         input_folder = lora_config.get('input_folder', self.paths.get('preprocessed'))
-        output_folder = lora_config.get('output_folder', '/Volumes/MySSD/ImageLib/phase2_lora/processed')
+        output_folder = lora_config.get('output_folder', self.paths.get('lora_processed'))
         
         logInfo(f"📁 Input: {input_folder}")
         logInfo(f"📂 Output: {output_folder}")
@@ -340,8 +586,8 @@ class PipelineRunner:
         logInfo("💧 Stage 7: Watermarking LoRA-processed images")
         
         lora_config = self.config.get('lora_processing', {})
-        lora_output = lora_config.get('output_folder', '/Volumes/MySSD/ImageLib/phase2_lora/processed')
-        watermark_output = '/Volumes/MySSD/ImageLib/phase2_lora/watermarked'
+        lora_output = lora_config.get('output_folder', self.paths.get('lora_processed'))
+        watermark_output = self.paths.get('lora_watermarked') or (self.paths.get('output') and str(Path(self.paths.get('output'))/"lora_wm"))
         
         logInfo(f"📁 Input: {lora_output}")
         logInfo(f"📂 Output: {watermark_output}")
@@ -354,7 +600,8 @@ class PipelineRunner:
             sys.executable,
             'postprocess_lora.py',
             '--input', lora_output,
-            '--output', watermark_output
+            '--output', watermark_output,
+            '--force'  # Always re-watermark when running from pipeline
         ]
         
         try:
@@ -373,7 +620,7 @@ class PipelineRunner:
         logInfo("☁️  Stage 8: Deploying to AWS S3")
         
         s3_config = self.config.get('s3_deployment', {})
-        source_folder = Path(s3_config.get('source_folder', '/Volumes/MySSD/ImageLib/phase2_lora/watermarked'))
+        source_folder = Path(s3_config.get('source_folder', self.paths.get('lora_watermarked')))
         bucket_name = s3_config.get('bucket_name', 'skicyclerun.lib')
         bucket_prefix = s3_config.get('bucket_prefix', 'albums')
         aws_profile = s3_config.get('aws_profile', 'default')
@@ -454,15 +701,7 @@ class PipelineRunner:
                         continue
                     
                     try:
-                        # Check if file already exists in S3
-                        try:
-                            s3_client.head_object(Bucket=bucket_name, Key=s3_key)
-                            skipped_files += 1
-                            continue
-                        except ClientError:
-                            pass  # File doesn't exist, proceed with upload
-                        
-                        # Upload file
+                        # Upload file (will overwrite if exists)
                         extra_args = {
                             'ContentType': s3_config.get('content_type', 'image/webp'),
                             'CacheControl': s3_config.get('cache_control', 'max-age=31536000, public'),
@@ -482,9 +721,22 @@ class PipelineRunner:
                         )
                         
                         uploaded_files += 1
+
+                        # Update master store with deployment info
+                        if self.master_store:
+                            deploy = {
+                                "bucket": bucket_name,
+                                "key": s3_key,
+                                "region": s3_config.get('region'),
+                                "uploaded_at": utc_now_iso_z(),
+                                "cache_control": extra_args.get('CacheControl'),
+                                "content_type": extra_args.get('ContentType'),
+                                "storage_class": extra_args.get('StorageClass'),
+                            }
+                            self.master_store.update_section(str(image_file), 'deployment', deploy, stage='s3_deployment')
                         
                         if uploaded_files % 10 == 0:
-                            logInfo(f"  Uploaded {uploaded_files}/{total_files} files...")
+                            logInfo(f"  ✓ Uploaded {uploaded_files} new | {total_files} total files processed...")
                         
                     except ClientError as e:
                         logError(f"  ❌ Failed to upload {image_file.name}: {e}")
@@ -515,6 +767,7 @@ class PipelineRunner:
             'export': self.run_export_stage,
             'cleanup': self.run_cleanup_stage,
             'metadata_extraction': self.run_metadata_extraction_stage,
+            'geocode_sweep': self.run_geocode_sweep_stage,
             'preprocessing': self.run_preprocessing_stage,
             'watermarking': self.run_watermarking_stage,
             'lora_processing': self.run_lora_processing_stage,
@@ -537,8 +790,25 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="SkiCycleRun Photo Processing Pipeline")
     parser.add_argument("--config", default="config/pipeline_config.json", help="Pipeline config file")
     parser.add_argument("--stages", nargs='+', help="Specific stages to run")
+    parser.add_argument("--cache-only-geocode", action="store_true", help="Use geocoding cache only (no network calls)")
+    # Geocode sweep filters
+    parser.add_argument("--sweep-path-contains", help="Only sweep entries whose path contains this substring")
+    parser.add_argument("--sweep-limit", type=int, help="Limit number of entries processed in geocode sweep")
+    parser.add_argument("--sweep-only-missing", action="store_true", help="Process only entries missing location/heading/POIs")
+    parser.add_argument("--sweep-skip-poi", action="store_true", help="Skip POI fetching during sweep")
+    parser.add_argument("--sweep-skip-heading", action="store_true", help="Skip EXIF heading extraction during sweep")
+    parser.add_argument("--sweep-pulse-sec", type=int, default=5, help="Heartbeat interval in seconds for geocode sweep progress")
     
     args = parser.parse_args()
     
-    runner = PipelineRunner(args.config)
+    runner = PipelineRunner(
+        args.config,
+        cache_only_geocode=args.cache_only_geocode,
+        sweep_path_contains=args.sweep_path_contains,
+        sweep_limit=args.sweep_limit,
+        sweep_only_missing=args.sweep_only_missing,
+        sweep_skip_poi=args.sweep_skip_poi,
+        sweep_skip_heading=args.sweep_skip_heading,
+        sweep_pulse_sec=args.sweep_pulse_sec,
+    )
     runner.run_pipeline(args.stages)

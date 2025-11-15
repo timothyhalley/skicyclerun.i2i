@@ -243,6 +243,36 @@ aws s3 sync phase3_deploy/ s3://skicyclerun-images/ --delete
 
 # Invalidate CloudFront cache
 aws cloudfront create-invalidation --distribution-id XXX --paths "/*"
+
+aws cloudfront list-distributions --query "DistributionList.Items[*].[Id,DomainName,Origins.Items[0].DomainName,Comment]" --output table
+-----------------------------------------------------------------------------------------------------------------
+|                                               ListDistributions                                               |
++----------------+---------------------------------+----------------------------------------------+-------------+
+|  E1SKA6PEPTIDW2|  ddiutukjt0tac.cloudfront.net   |  skicyclerun.tst.s3.us-west-2.amazonaws.com  |  DEV & TEST |
+|  EG2MWPWJ56AVU |  d1pmfnhh6vq1hp.cloudfront.net  |  skicyclerun.com.s3.us-west-2.amazonaws.com  |  WWW PROD   |
+|  E1GQ61X0LT69AR|  dph8i1b9tv95y.cloudfront.net   |  skicyclerun.lib.s3.us-west-2.amazonaws.com  |  PHOTO LIB  |
++----------------+---------------------------------+----------------------------------------------+-------------+
+
+aws cloudfront create-invalidation --distribution-id E1GQ61X0LT69AR --paths "/*"
+
+
+aws cloudfront list-distributions --output json | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+items = data.get('DistributionList', {}).get('Items', [])
+if not items:
+    print('No CloudFront distributions found')
+else:
+    for dist in items:
+        print(f\"ID: {dist['Id']}\")
+        print(f\"Domain: {dist['DomainName']}\")
+        origin = dist['Origins']['Items'][0]['DomainName']
+        print(f\"Origin: {origin}\")
+        print(f\"Status: {dist['Status']}\")
+        print('---')
+"
+
+ aws cloudfront list-invalidations --distribution-id E1GQ61X0LT69AR --output table
 ```
 
 ---
@@ -341,6 +371,29 @@ Contains:
 - File size reduction percentages
 - Processing timestamps
 - EXIF date taken
+
+---
+
+## Time Standard
+
+- Standard: ISO8601 UTC with `Z` suffix for all pipeline-generated timestamps.
+- Helper: `utils/time_utils.utc_now_iso_z()` is the single source for generating UTC timestamps.
+- Applies to stored fields:
+  - `master.json` → `created_at`, `pipeline.timestamps[stage]`
+  - Preprocessing → `processed_timestamp`
+  - Metadata extraction → `timestamp`
+  - Watermarking → `watermark.applied_at`
+  - S3 deployment → `deployment.uploaded_at`
+- EXIF `date_taken` and derived UTC:
+  - `date_taken`: preserved from file as-is (often naive/local time).
+  - `date_taken_utc`: derived when GPS coordinates exist by inferring timezone via `timezonefinder` and converting local capture time to UTC. Stored with `Z`.
+  - If inference is not possible (no GPS or lib missing), only `date_taken` is stored.
+  - Downstream uses `date_taken_utc` preferentially for filenames and watermarks.
+
+Dependencies
+
+- Python stdlib `zoneinfo` for timezone conversions
+- `timezonefinder` (added to `requirements.txt`) for lat/lon → timezone mapping
 
 ---
 

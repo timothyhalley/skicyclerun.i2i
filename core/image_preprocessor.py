@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Dict, Tuple, Optional
 import json
 from datetime import datetime
+from utils.time_utils import utc_now_iso_z
 
 
 class ImagePreprocessor:
@@ -132,7 +133,7 @@ class ImagePreprocessor:
                 'original_file_size': input_size,
                 'processed_file_size': output_size,
                 'size_reduction_percent': round(size_reduction, 2),
-                'processed_timestamp': datetime.now().isoformat(),
+                'processed_timestamp': utc_now_iso_z(),
                 'quality': self.quality
             }
             
@@ -225,8 +226,9 @@ class ImagePreprocessor:
         
         # Calculate statistics
         if processed_catalog:
-            total_input_size = sum(m['original_file_size'] for m in processed_catalog.values())
-            total_output_size = sum(m['processed_file_size'] for m in processed_catalog.values())
+            # Use safe access because some pre-existing entries may not include size fields
+            total_input_size = sum((m.get('original_file_size') or 0) for m in processed_catalog.values())
+            total_output_size = sum((m.get('processed_file_size') or 0) for m in processed_catalog.values())
             total_reduction = ((total_input_size - total_output_size) / total_input_size) * 100 if total_input_size > 0 else 0
             
             print(f"📉 Total size reduction: {total_reduction:.2f}% ({total_input_size / 1024 / 1024:.2f} MB → {total_output_size / 1024 / 1024:.2f} MB)")

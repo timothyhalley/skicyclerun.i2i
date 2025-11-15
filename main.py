@@ -558,7 +558,6 @@ def main():
         # Check for stop file (graceful shutdown)
         stop_file = "/tmp/skicyclerun_stop"
         if os.path.exists(stop_file):
-            from datetime import datetime
             stop_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             logInfo("\n" + "=" * 80)
             logInfo(f"🛑 STOP FILE DETECTED: {stop_file}")

@@ -6,6 +6,7 @@
       "export",
       "cleanup",
       "metadata_extraction",
+      "geocode_sweep",
       "preprocessing",
       "lora_processing",
       "post_lora_watermarking",
@@ -13,13 +14,15 @@
     ]
   },
   "paths": {
-    "apple_photos_export": "/Volumes/MySSD/ImageLib/phase1_extract/raw",
-    "raw_input": "/Volumes/MySSD/ImageLib/phase1_extract/raw",
-    "preprocessed": "/Volumes/MySSD/ImageLib/phase1_extract/scaled",
-    "watermarked": "/Volumes/MySSD/ImageLib/phase1_extract/watermarked",
-    "output": "/Volumes/MySSD/ImageLib/phase1_extract/ready_for_lora",
-    "archive": "/Volumes/MySSD/ImageLib/archive",
-    "metadata_catalog": "/Volumes/MySSD/ImageLib/phase1_extract/metadata/catalog.json"
+    "apple_photos_export": "/Volumes/MySSD/skicyclerun.i2i/images/raw",
+    "raw_input": "/Volumes/MySSD/skicyclerun.i2i/images/raw",
+    "preprocessed": "/Volumes/MySSD/skicyclerun.i2i/images/scaled",
+    "watermarked": "/Volumes/MySSD/skicyclerun.i2i/images/watermarked_pre",
+    "output": "/Volumes/MySSD/skicyclerun.i2i/images/prep_lora",
+    "lora_processed": "/Volumes/MySSD/skicyclerun.i2i/images/lora/processed",
+    "lora_watermarked": "/Volumes/MySSD/skicyclerun.i2i/images/lora/watermarked",
+    "archive": "/Volumes/MySSD/skicyclerun.i2i/archive",
+    "master_catalog": "/Volumes/MySSD/skicyclerun.i2i/images/metadata/master.json"
   },
   "export": {
     "enabled": true,
@@ -45,7 +48,28 @@
       "user_agent": "SkiCycleRun/1.0",
       "rate_limit_seconds": 1.0,
       "cache_enabled": true,
-      "cache_file": "/Volumes/MySSD/ImageLib/metadata/geocode_cache.json"
+      "cache_file": "/Volumes/MySSD/ImageLib/metadata/geocode_cache.json",
+      "cache_only": false,
+      "zoom": 16
+    },
+    "poi_enrichment": {
+      "enabled": true,
+      "radius_m": 600,
+      "max_results": 5,
+      "timeout_seconds": 15,
+      "overpass_url": "https://overpass-api.de/api/interpreter",
+      "categories": [
+        "museum",
+        "attraction",
+        "viewpoint",
+        "historic",
+        "natural"
+      ],
+      "use_heading_filter": true,
+      "fov_degrees": 60,
+      "max_distance_m": 500,
+      "heading_weight": 0.7,
+      "distance_weight": 0.3
     }
   },
   "preprocessing": {
@@ -58,18 +82,25 @@
     "catalog_metadata": true
   },
   "watermark": {
-    "enabled": false,
+    "enabled": true,
     "format": "SkiCycleRun © {year} {astro_symbol} {location}",
     "year_offset": 1,
+    "include_landmark": true,
+    "landmark_min_score": 0.6,
+    "landmark_max_distance_m": 300,
+    "landmark_format": " — {name}",
     "font": {
-      "family": "Asimovian",
-      "size": 24,
-      "color": [255, 255, 255, 180],
-      "stroke_color": [0, 0, 0, 200],
-      "stroke_width": 2
+      "family": "Courier New Bold",
+      "size": 36,
+      "min_size": 20,
+      "max_width_percent": 60,
+      "fit_mode": "shrink_to_fit",
+      "color": [255, 255, 255, 220],
+      "stroke_color": [0, 0, 0, 255],
+      "stroke_width": 3
     },
     "position": "bottom_right",
-    "margin": { "x": 20, "y": 20 },
+    "margin": { "x": 50, "y": 40 },
     "apply_before_lora": false
   },
   "lora_processing": {
@@ -84,17 +115,16 @@
       "Gorillaz",
       "Origami",
       "PencilDrawing",
-      "FractalGeometry",
-      "Poly_Futurism"
+      "FractalGeometry"
     ],
-    "input_folder": "/Volumes/MySSD/ImageLib/phase1_extract/scaled",
-    "output_folder": "/Volumes/MySSD/ImageLib/phase2_lora/processed"
+    "input_folder": "/Volumes/MySSD/skicyclerun.i2i/images/scaled",
+    "output_folder": "/Volumes/MySSD/skicyclerun.i2i/images/lora/processed"
   },
   "s3_deployment": {
     "enabled": true,
     "bucket_name": "skicyclerun.lib",
     "bucket_prefix": "albums",
-    "source_folder": "/Volumes/MySSD/ImageLib/phase2_lora/watermarked",
+    "source_folder": "/Volumes/MySSD/skicyclerun.i2i/images/lora/watermarked",
     "aws_profile": "default",
     "preserve_album_structure": true,
     "content_type": "image/webp",

@@ -6,8 +6,10 @@ This runs AFTER LoRA artistic processing to preserve watermark quality
 import json
 import argparse
 from pathlib import Path
+from utils.time_utils import utc_now_iso_z
 from core.watermark_generator import WatermarkGenerator
 from core.watermark_applicator import WatermarkApplicator
+from core.master_store import MasterStore
 from utils.logger import logInfo, logWarn, logError
 
 
@@ -15,38 +17,24 @@ class PostLoRAProcessor:
     def __init__(self, config_path: str = "config/pipeline_config.json"):
         self.config = self._load_config(config_path)
         self.watermark_config = self.config.get('watermark', {})
-        self.metadata_catalog = self._load_metadata_catalog()
+        paths = self.config.get('paths', {})
+        master_path = paths.get('master_catalog')
+        self.master_store = MasterStore(master_path) if master_path else None
+        # Derived path defaults from unified scaffold
+        self.default_lora_input = paths.get('lora_processed') or paths.get('output')
+        self.default_lora_watermarked = paths.get('lora_watermarked') or (
+            self.default_lora_input and str(Path(self.default_lora_input).parent / 'watermarked')
+        )
         
     def _load_config(self, config_path: str):
         """Load pipeline configuration"""
         with open(config_path, 'r') as f:
             return json.load(f)
     
-    def _load_metadata_catalog(self):
-        """Load metadata catalog from Phase 1"""
-        catalog_path = Path(self.config.get('paths', {}).get(
-            'metadata_catalog', 
-            '/Volumes/MySSD/ImageLib/phase1_extract/metadata/catalog.json'
-        ))
-        
-        if not catalog_path.exists():
-            logWarn(f"⚠️  Metadata catalog not found: {catalog_path}")
-            return {}
-        
-        try:
-            with open(catalog_path, 'r') as f:
-                return json.load(f)
-        except Exception as e:
-            logError(f"Failed to load metadata catalog: {e}")
-            return {}
-    
     def find_metadata_for_image(self, lora_image_path: Path) -> dict:
         """
-        Find original metadata for a LoRA-processed image
-        Matches by filename across the catalog
-        
-        LoRA files are named: {base_name}_{style}_{timestamp}.webp
-        We need to strip the style and timestamp to match the original
+        Find suitable metadata for a LoRA-processed image using MasterStore.
+        Prefer the corresponding preprocessed entry; fall back to raw entry by base name.
         """
         filename_base = lora_image_path.stem
         
@@ -63,27 +51,46 @@ class PostLoRAProcessor:
         else:
             original_base = filename_base
         
-        # Try to find matching entry in catalog
-        # The catalog has paths from scaled folder, we need to match by filename
-        for catalog_path, metadata in self.metadata_catalog.items():
-            catalog_filename = Path(catalog_path).stem
-            
-            # Match by base filename (exact or contained)
-            if catalog_filename == original_base or \
-               catalog_filename in original_base or \
-               original_base in catalog_filename:
-                return metadata
-        
-        # If not found, return empty metadata
+        if not self.master_store:
+            return {}
+        # Try direct candidate path in preprocessed folder
+        pre_dir = Path(self.config.get('paths', {}).get('preprocessed'))
+        album_dir = lora_image_path.parent.name
+        candidates = [
+            pre_dir / album_dir / f"{original_base}.webp",
+            pre_dir / album_dir / f"{original_base}.jpg",
+            pre_dir / album_dir / f"{original_base}.jpeg",
+            pre_dir / album_dir / f"{original_base}.png",
+        ]
+        for c in candidates:
+            e = self.master_store.get(str(c))
+            if e and e.get('preprocessing'):
+                return {
+                    'location_formatted': e.get('location_formatted'),
+                    'date_taken_utc': (e.get('exif') or {}).get('date_taken_utc'),
+                    'date_taken': (e.get('exif') or {}).get('date_taken'),
+                    'landmarks': e.get('landmarks')
+                }
+        # Fallback: search raw entries by file_name stem
+        base = original_base
+        for fp, e in self.master_store.list_paths().items():
+            if Path(fp).stem == base and 'metadata_extraction' in e.get('pipeline', {}).get('stages', []):
+                return {
+                    'location_formatted': e.get('location_formatted'),
+                    'date_taken_utc': (e.get('exif') or {}).get('date_taken_utc'),
+                    'date_taken': (e.get('exif') or {}).get('date_taken'),
+                    'landmarks': e.get('landmarks')
+                }
         logWarn(f"⚠️  No metadata found for {lora_image_path.name} (base: {original_base})")
         return {}
     
     def watermark_lora_output(
         self, 
-        lora_input_folder: str = "/Volumes/MySSD/ImageLib/phase2_lora/processed",
-        output_folder: str = "/Volumes/MySSD/ImageLib/phase2_lora/watermarked",
+        lora_input_folder: str = None,
+        output_folder: str = None,
         album_filter: str = None,
-        style_filter: str = None
+        style_filter: str = None,
+        force: bool = False
     ):
         """
         Apply watermarks to all LoRA-processed images
@@ -96,6 +103,8 @@ class PostLoRAProcessor:
         """
         logInfo("💧 Phase 2.5: Watermarking LoRA-processed images")
         
+        lora_input_folder = lora_input_folder or self.default_lora_input
+        output_folder = output_folder or self.default_lora_watermarked
         lora_path = Path(lora_input_folder)
         output_path = Path(output_folder)
         
@@ -108,6 +117,10 @@ class PostLoRAProcessor:
         watermark_config['enabled'] = True
         temp_config = self.config.copy()
         temp_config['watermark'] = watermark_config
+        
+        # Log font configuration being used
+        font_config = watermark_config.get('font', {})
+        logInfo(f"🔤 Font config: size={font_config.get('size', 'NOT SET')}, family={font_config.get('family', 'NOT SET')}")
         
         watermark_gen = WatermarkGenerator(temp_config)
         watermark_app = WatermarkApplicator(temp_config)
@@ -146,14 +159,19 @@ class PostLoRAProcessor:
                 output_album_dir.mkdir(parents=True, exist_ok=True)
                 output_file = output_album_dir / image_file.name
                 
-                # Skip if already watermarked
-                if output_file.exists():
+                # Skip if already watermarked (unless force=True)
+                if output_file.exists() and not force:
                     skipped_count += 1
                     continue
                 
                 try:
                     # Find metadata for this image
                     metadata = self.find_metadata_for_image(image_file)
+                    # Try to infer LoRA style from filename
+                    style_name = None
+                    parts = image_file.stem.rsplit('_', 2)
+                    if len(parts) == 3 and parts[-1].isdigit() and len(parts[-1]) == 8:
+                        style_name = parts[1]
                     
                     # Generate watermark text
                     watermark_text = watermark_gen.generate_from_metadata(metadata)
@@ -164,6 +182,33 @@ class PostLoRAProcessor:
                         watermark_text,
                         str(output_file)
                     )
+
+                    # Update master store entry for the watermarked LoRA image
+                    if self.master_store:
+                        font_cfg = self.watermark_config.get('font', {})
+                        wm_block = {
+                            "text": watermark_text,
+                            "font": {
+                                "family": font_cfg.get("family"),
+                                "size": font_cfg.get("size"),
+                                "min_size": font_cfg.get("min_size"),
+                                "max_width_percent": font_cfg.get("max_width_percent"),
+                                "fit_mode": font_cfg.get("fit_mode"),
+                            },
+                            "position": self.watermark_config.get('position'),
+                            "margin": self.watermark_config.get('margin'),
+                            "applied_at": utc_now_iso_z(),
+                            "input_path": str(image_file),
+                            "output_path": str(output_file),
+                        }
+                        lora_block = {"style": style_name} if style_name else {}
+                        patch = {
+                            "type": "lora_watermarked",
+                            "source_path": str(image_file),
+                            "lora": lora_block,
+                            "watermark": wm_block,
+                        }
+                        self.master_store.update_entry(str(output_file), patch, stage='post_lora_watermarking')
                     
                     watermarked_count += 1
                     
@@ -207,15 +252,21 @@ def main():
         default="config/pipeline_config.json",
         help="Pipeline config file"
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Force re-watermark existing images (overwrite)"
+    )
     
     args = parser.parse_args()
     
     processor = PostLoRAProcessor(args.config)
     processor.watermark_lora_output(
-        lora_input_folder=args.input,
-        output_folder=args.output,
+        lora_input_folder=args.input or processor.default_lora_input,
+        output_folder=args.output or processor.default_lora_watermarked,
         album_filter=args.album,
-        style_filter=args.style
+        style_filter=args.style,
+        force=args.force
     )
 
 
