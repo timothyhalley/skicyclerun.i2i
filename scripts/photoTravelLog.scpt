@@ -12,9 +12,13 @@ on run argv
 	if (count of argv) > 0 then
 		set outputPath to item 1 of argv
 	else
-		set outputPath to "/Volumes/MySSD/ImageLib/travel_log.json"
+		set envLibRoot to my resolveEnv("SKICYCLERUN_LIB_ROOT")
+		if envLibRoot is not "" then
+			set outputPath to my appendPath(envLibRoot, "logs/travel_log.json")
+		else
+			set outputPath to "/Volumes/MySSD/ImageLib/travel_log.json"
+		end if
 	end if
-	
 	log "Travel log will be saved to: " & outputPath
 	
 	-- Create temp directory for EXIF extraction
@@ -137,6 +141,7 @@ on run argv
 	
 	-- Write JSON to file
 	try
+		my ensureParentDirectory(outputPath)
 		-- Use do shell script instead of AppleScript file access
 		do shell script "cat > " & quoted form of outputPath & " << 'EOF'
 " & jsonData & "
@@ -151,6 +156,40 @@ EOF"
 	end try
 	
 end run
+
+on resolveEnv(varName)
+	try
+		set value to do shell script "printenv " & quoted form of varName
+		if value is "" then
+			return ""
+		else
+			return my stripTrailingSlash(value)
+		end if
+	on error
+		return ""
+	end try
+end resolveEnv
+
+on appendPath(basePath, child)
+	if basePath ends with "/" then
+		return basePath & child
+	else
+		return basePath & "/" & child
+	end if
+end appendPath
+
+on stripTrailingSlash(somePath)
+	if somePath ends with "/" then
+		return text 1 thru -2 of somePath
+	else
+		return somePath
+	end if
+end stripTrailingSlash
+
+on ensureParentDirectory(filePath)
+	set parentDir to do shell script "dirname " & quoted form of filePath
+	do shell script "mkdir -p " & quoted form of parentDir
+end ensureParentDirectory
 
 -- Extract GPS data from image file using exiftool
 on extractGPSData(filePath)

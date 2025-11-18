@@ -21,10 +21,10 @@ class PostLoRAProcessor:
         master_path = paths.get('master_catalog')
         self.master_store = MasterStore(master_path) if master_path else None
         # Derived path defaults from unified scaffold
-        self.default_lora_input = paths.get('lora_processed') or paths.get('output')
-        self.default_lora_watermarked = paths.get('lora_watermarked') or (
-            self.default_lora_input and str(Path(self.default_lora_input).parent / 'watermarked')
-        )
+        self.default_lora_input = paths.get('lora_processed')
+        self.default_lora_watermarked = paths.get('final_albums')
+        if not self.default_lora_watermarked and self.default_lora_input:
+            self.default_lora_watermarked = str(Path(self.default_lora_input).parent / 'lora_final')
         
     def _load_config(self, config_path: str):
         """Load pipeline configuration"""
@@ -231,13 +231,13 @@ def main():
     )
     parser.add_argument(
         "--input",
-        default="/Volumes/MySSD/ImageLib/phase2_lora/processed",
-        help="Folder with LoRA-processed images"
+        default=None,
+        help="Folder with LoRA-processed images (default: from pipeline config)"
     )
     parser.add_argument(
         "--output",
-        default="/Volumes/MySSD/ImageLib/phase2_lora/watermarked",
-        help="Output folder for watermarked images"
+        default=None,
+        help="Output folder for watermarked images (default: from pipeline config)"
     )
     parser.add_argument(
         "--album",

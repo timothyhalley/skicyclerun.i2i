@@ -6,22 +6,22 @@ Complete photo management pipeline: Apple Photos export → metadata extraction 
 
 ```text
 Apple Photos
-    ↓
-[1. Export Stage] → /Volumes/MySSD/ImageLib/input/[album_name]/
-    ↓
-[2. Cleanup Stage] → Archive old outputs, prepare directories
-    ↓
-[3. Metadata Extraction] → Extract GPS + Reverse Geocode + Dates
-    ↓
-[4. Preprocessing] → Scale & Optimize for LoRA input
-    ↓
-[5. LoRA Processing] → Apply 6+ artistic style filters
-    │    (Afremov, Gorillaz, PencilDrawing, FractalGeometry, etc.)
-    ↓
-[6. Post-LoRA Watermarking] → "SkiCycleRun © 2026 ♈ Denver, CO"
-    │    (Applied AFTER LoRA to avoid style interference)
-    ↓
-[7. S3 Deployment] → Upload to AWS S3 bucket
+  ↓
+[1. Export Stage] → {lib_root}/raw/[album_name]/
+  ↓
+[2. Cleanup Stage] → Archive old outputs, prepare directories under {lib_root}
+  ↓
+[3. Metadata Extraction] → Extract EXIF, GPS + Reverse Geocode + Dates → {lib_root}/metadata
+  ↓
+[4. Preprocessing] → Scale & Optimize for LoRA input → {lib_root}/scaled
+  ↓
+[5. LoRA Processing] → Apply artistic style filters → {lib_root}/images/lora_processed
+  │    (Afremov, Gorillaz, PencilDrawing, FractalGeometry, etc.)
+  ↓
+[6. Post-LoRA Watermarking] → "SkiCycleRun © 2026 ♈ Denver, CO" → {lib_root}/images/lora_final
+  │    (Applied AFTER LoRA to avoid style interference)
+  ↓
+[7. S3 Deployment] → Upload to AWS S3 bucket (source {lib_root}/images/lora_final)
     ↓
 Final Output → s3://skicyclerun.lib/albums/
 ```
@@ -30,11 +30,13 @@ Final Output → s3://skicyclerun.lib/albums/
 
 ## Quick Start
 
+> Setup reminder: `source ./env_setup.sh <images_root> [huggingface_cache]` in every terminal. The script exports Hugging Face's `HF_HOME`, `HUGGINGFACE_CACHE`, and `HF_DATASETS_CACHE` to the SSD cache you specify, and explicitly unsets the deprecated `TRANSFORMERS_CACHE` variable to silence the warning. `pipeline.py` now runs the config health check automatically and pauses for confirmation before any work starts. Pass `--yes` for unattended runs.
+
 ### 1. Full Pipeline (All 7 Stages)
 
 ```bash
 # Run complete pipeline with caffeinate to prevent sleep
-caffeinate -i python pipeline.py
+caffeinate -i python pipeline.py --yes
 ```
 
 ### 2. Geocode Sweep (fill missing locations)
@@ -81,6 +83,16 @@ touch /tmp/skicyclerun_stop
 # Resume later with same command - already-processed images are skipped
 ```
 
+### 6. Config Health Check
+
+Validate that every stage directory and dependency is reachable before launching a long run:
+
+```bash
+python pipeline.py --config config/pipeline_config.json --check-config
+```
+
+This resolves `{lib_root}` placeholders, creates any missing folders (empty), and reports optional files like metadata catalogs so you can populate them in advance.
+
 ## Configuration
 
 Edit `config/pipeline_config.json` to customize:
@@ -117,8 +129,8 @@ Edit `config/pipeline_config.json` to customize:
       "Super_Pencil",
       "American_Comic"
     ],
-    "input_dir": "/Volumes/MySSD/ImageLib/preprocessed",
-    "output_dir": "/Volumes/MySSD/ImageLib/output",
+    "input_dir": "{lib_root}/images/scaled",
+    "output_dir": "{lib_root}/images/lora_processed",
     "default_lora_scale": 0.85,
     "default_text_encoder_scale": 0.65,
     "guidance_scale": 3.5,
@@ -133,8 +145,8 @@ Edit `config/pipeline_config.json` to customize:
 {
   "post_lora_watermarking": {
     "enabled": true,
-    "input_dir": "/Volumes/MySSD/ImageLib/output",
-    "metadata_catalog": "/Volumes/MySSD/ImageLib/metadata/catalog.json",
+    "input_dir": "{lib_root}/images/lora_processed",
+    "metadata_catalog": "{lib_root}/images/metadata/master.json",
     "format": "SkiCycleRun © {year} {astro_symbol} {location}",
     "position": "bottom_right",
     "font": {
@@ -286,10 +298,10 @@ aws s3 ls s3://skicyclerun.lib/albums/ --recursive --human-readable
 tail -f logs/pipeline_$(date +%Y%m%d)*.log
 
 # Check output count
-ls -1 /Volumes/MySSD/ImageLib/output/*.webp | wc -l
+ls -1 "$SKICYCLERUN_LIB_ROOT/images/lora_processed"/*.webp | wc -l
 
 # Verify watermarks applied
-find /Volumes/MySSD/ImageLib/output -name "*_Afremov_*.webp" | head -5 | xargs -I {} identify -verbose {} | grep -i comment
+find "$SKICYCLERUN_LIB_ROOT/images/lora_processed" -name "*_Afremov_*.webp" | head -5 | xargs -I {} identify -verbose {} | grep -i comment
 ```
 
 ## File Naming Convention
@@ -316,16 +328,16 @@ S3 Path:      s3://skicyclerun.lib/albums/VacationAlbum/IMG_1234_Afremov_2025110
 Single source of truth:
 
 - `master.json` (authoritative): incrementally updated by every stage and keyed by absolute file path.
-  - Location: `/Volumes/MySSD/ImageLib/metadata/master.json` (see `paths.master_catalog`)
+  - Location: `{lib_root}/images/metadata/master.json` (see `paths.master_catalog`)
   - Contains per-file blocks: `exif`, `gps`, `location`, `preprocessing`, `watermark`, `lora`, `deployment`, and `pipeline` stage timestamps.
 
 After `metadata_extraction`, entries appear in `master.json` keyed by the original image path:
 
 ```json
 {
-  "/Volumes/MySSD/ImageLib/input/Vacation/IMG_1234.jpg": {
+  "{lib_root}/images/raw/Vacation/IMG_1234.jpg": {
     "file_name": "IMG_1234.jpg",
-    "file_path": "/Volumes/MySSD/ImageLib/input/Vacation/IMG_1234.jpg",
+    "file_path": "{lib_root}/images/raw/Vacation/IMG_1234.jpg",
     "extracted_timestamp": "2025-11-05T16:30:00",
     "exif": { "date_taken": "2025-11-01T14:30:45" },
     "gps": { "lat": 39.7392, "lon": -104.9903 },
@@ -385,7 +397,7 @@ python pipeline.py --stages lora_processing
 After complete pipeline:
 
 ```text
-/Volumes/MySSD/ImageLib/output/
+{lib_root}/images/lora_processed/
 ├── IMG_1234_Afremov_20251109_143052.webp
 ├── IMG_1234_Gorillaz_20251109_144238.webp
 ├── IMG_1234_PencilDrawing_20251109_145312.webp
@@ -432,7 +444,7 @@ s3://skicyclerun.lib/albums/
 ### Geocoding Rate Limits
 
 - **Nominatim**: 1 request/second (automatically enforced)
-- **Cache location**: `/Volumes/MySSD/ImageLib/metadata/geocode_cache.json`
+- **Cache location**: `{lib_root}/images/metadata/geocode_cache.json`
 - **Missing GPS**: Not all photos have GPS coordinates - watermark shows "Unknown Location"
 - **Cache-only dev mode**: Skip network calls when building metadata for speed.
   - Toggle via config: `metadata_extraction.geocoding.cache_only: true`
@@ -504,7 +516,7 @@ You mentioned you're ready to queue up the final steps. Here's your path forward
 # Apply watermarks to all LoRA-processed images in output directory
 python pipeline.py --stages post_lora_watermarking
 
-# This reads metadata from /Volumes/MySSD/ImageLib/metadata/catalog.json
+# This reads metadata from {lib_root}/images/metadata/master.json
 # Generates watermarks like: "SkiCycleRun © 2026 ♈ Denver, CO"
 # Processes all files matching: *_{LoRA}_{timestamp}.webp
 ```
@@ -552,7 +564,7 @@ Verify these settings in `config/pipeline_config.json`:
 {
   "post_lora_watermarking": {
     "enabled": true,
-    "input_dir": "/Volumes/MySSD/ImageLib/output"
+    "input_dir": "{lib_root}/images/lora_processed"
   },
   "s3_deployment": {
     "enabled": true,

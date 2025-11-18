@@ -103,7 +103,7 @@ result = pipeline(
 )
 ```
 
-### 5. Config (`config/default_config.json`)
+### 5. Config (`config/pipeline_config.json` → `lora_processing`)
 
 ```json
 // OLD:

@@ -9,7 +9,7 @@ Three-phase pipeline for processing photos from Apple Photos through LoRA artist
 ## Folder Structure
 
 ```text
-/Volumes/MySSD/ImageLib/
+{lib_root}/
 │
 ├── phase1_extract/              # PHASE 1: Extract & Prepare
 │   ├── raw/                     # Apple Photos exports (by album)
@@ -128,16 +128,19 @@ All stages check for existing output and skip duplicates:
 
 ### Phase 2 Output
 
-- `phase2_lora/processed/[AlbumName]/[StyleName]/` - Styled images organized by album and style
+- `images/lora_processed/[AlbumName]/[StyleName]/` - Styled images organized by album and style
 
 ### Configuration
 
-File: `config/default_config.json`
+File: `config/pipeline_config.json` → `lora_processing`
 
 ```json
 {
-  "input_folder": "/Volumes/MySSD/ImageLib/phase1_extract/watermarked",
-  "output_folder": "/Volumes/MySSD/ImageLib/phase2_lora/processed"
+  "input_folder": "{lib_root}/images/scaled",
+  "output_folder": "{lib_root}/images/lora_processed",
+  "num_inference_steps": 24,
+  "guidance_scale": 3.5,
+  "precision": "bfloat16"
 }
 ```
 
@@ -161,13 +164,13 @@ python main.py --lora American_Comic --batch
 #### Single Style - Specific Album
 
 ```bash
-python main.py --lora Impressionism --batch --input /Volumes/MySSD/ImageLib/phase1_extract/watermarked/VacationPhotos
+python main.py --lora Impressionism --batch --input "$SKICYCLERUN_LIB_ROOT/images/watermarked/VacationPhotos"
 ```
 
 #### Single Style - Single Image
 
 ```bash
-python main.py --lora Van_Gogh --input /Volumes/MySSD/ImageLib/phase1_extract/watermarked/AlbumName/image.webp
+python main.py --lora Van_Gogh --input "$SKICYCLERUN_LIB_ROOT/images/watermarked/AlbumName/image.webp"
 ```
 
 #### Custom Seed (Reproducibility)
@@ -189,14 +192,14 @@ Process each album with multiple styles:
 ```bash
 # Album: VacationPhotos with 3 styles
 for style in American_Comic Impressionism Watercolor; do
-  python main.py --lora $style --batch --input /Volumes/MySSD/ImageLib/phase1_extract/watermarked/VacationPhotos
+  python main.py --lora $style --batch --input "$SKICYCLERUN_LIB_ROOT/images/watermarked/VacationPhotos"
 done
 ```
 
 ### Output Organization
 
 ```text
-phase2_lora/processed/
+images/lora_processed/
   VacationPhotos/
     American_Comic/
       paris_001.webp
@@ -217,7 +220,7 @@ phase2_lora/processed/
 
 ### Phase 3 Input
 
-- `phase2_lora/processed/` - LoRA-processed images
+- `images/lora_processed/` - LoRA-processed images
 
 ### Phase 3 Output
 
@@ -287,15 +290,6 @@ Phase 1 pipeline settings:
 - Geocoding provider (Nominatim)
 - Watermark format and font
 - Preprocessing settings (max size, quality)
-
-### `config/default_config.json`
-
-Phase 2 LoRA processing settings:
-
-- Input/output folders
-- FLUX model settings (steps, guidance scale)
-- Device settings (MPS, bfloat16)
-- Cache directories
 
 ### `config/lora_registry.json`
 

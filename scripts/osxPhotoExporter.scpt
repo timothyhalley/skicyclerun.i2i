@@ -5,32 +5,31 @@
 -- Note: Set Photos→Preferences→General→Metadata: include GPS info
 
 on run argv
-	-- Get export base path from argument or use default
+	-- Get export base path from argument, environment, or fallback default
 	if (count of argv) > 0 then
 		set baseExportPath to item 1 of argv
 	else
-		-- Default to external SSD location
-		set baseExportPath to "/Volumes/MySSD/skicyclerun.i2i/images/raw"
-		
-		-- Check if default path exists, if not offer to choose location
-		try
-			do shell script "test -d " & quoted form of baseExportPath
-		on error
-			-- Default path doesn't exist, ask user to choose
-			set userChoice to button returned of (display dialog "Default export location not found:" & return & baseExportPath & return & return & "Would you like to choose a different location?" buttons {"Cancel", "Choose Folder"} default button 2)
-			
-			if userChoice is "Choose Folder" then
-				set chosenFolder to choose folder with prompt "Select export destination folder:"
-				set baseExportPath to POSIX path of chosenFolder
-				-- Remove trailing slash if present
-				if baseExportPath ends with "/" then
-					set baseExportPath to text 1 thru -2 of baseExportPath
-				end if
-			else
-				return
-			end if
-		end try
+		set envLibRoot to my resolveEnv("SKICYCLERUN_LIB_ROOT")
+		if envLibRoot is not "" then
+			set baseExportPath to my appendPath(envLibRoot, "images/raw")
+		else
+			-- Default to historical external SSD location as last resort
+			set baseExportPath to "/Volumes/MySSD/skicyclerun.i2i/images/raw"
+		end if
 	end if
+
+	-- Ensure the base path exists or allow user to pick one
+	try
+		do shell script "test -d " & quoted form of baseExportPath
+	on error
+		set userChoice to button returned of (display dialog "Export location not found:" & return & baseExportPath & return & return & "Would you like to choose a different location?" buttons {"Cancel", "Choose Folder"} default button 2)
+		if userChoice is "Choose Folder" then
+			set chosenFolder to choose folder with prompt "Select export destination folder:"
+			set baseExportPath to my stripTrailingSlash(POSIX path of chosenFolder)
+		else
+			return
+		end if
+	end try
 	
 	log "Export destination: " & baseExportPath
 	
@@ -96,6 +95,35 @@ on run argv
 		
 	end tell
 end run
+
+on resolveEnv(varName)
+	try
+		set value to do shell script "printenv " & quoted form of varName
+		if value is "" then
+			return ""
+		else
+			return my stripTrailingSlash(value)
+		end if
+	on error
+		return ""
+	end try
+end resolveEnv
+
+on appendPath(basePath, child)
+	if basePath ends with "/" then
+		return basePath & child
+	else
+		return basePath & "/" & child
+	end if
+end appendPath
+
+on stripTrailingSlash(somePath)
+	if somePath ends with "/" then
+		return text 1 thru -2 of somePath
+	else
+		return somePath
+	end if
+end stripTrailingSlash
 
 -- Create folder using shell command
 on makeFolder(tPath)

@@ -8,6 +8,7 @@ import gc
 
 from datetime import datetime
 from utils.cli import load_config, list_loras
+from utils.config_utils import expand_with_paths
 from utils.spinner import Spinner
 from utils.validator import validate_config
 from core.pipeline_loader import load_pipeline
@@ -98,11 +99,12 @@ Examples:
   python main.py --list-loras                 # Show available LoRA styles
   python main.py --help                       # Show this help message
 
-Default config: config/default_config.json (override with --config)
+Default config: config/pipeline_config.json (override with --config)
         """,
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("--config", type=str, default="config/default_config.json", help="Path to config file")
+    parser.add_argument("--config", type=str, default="config/pipeline_config.json", help="Path to config file (supports placeholders/env)")
+    parser.add_argument("--check-config", action="store_true", help="Validate config paths, report resolution details, then exit")
     parser.add_argument("--dry-run", action="store_true", help="Skip inference, show planned actions (default when no action specified)")
     parser.add_argument("--input-folder", type=str, help="Override input folder path (for --batch mode)")
     parser.add_argument("--output-folder", type=str, help="Override output folder path")
@@ -205,7 +207,8 @@ def main():
         import json as json_module  # Explicit import to avoid any shadowing issues
         try:
             with open("config/lora_registry.json", "r") as f:
-                lora_registry = json_module.load(f)
+                raw_registry = json_module.load(f)
+                lora_registry = expand_with_paths(raw_registry)
             logInfo("🎨 Available LoRA Styles:")
             logInfo("=" * 80)
             for name, info in sorted(lora_registry.items()):
@@ -221,12 +224,98 @@ def main():
     # ─────────────────────────────────────────────────────────────
     # Load and validate config
     # ─────────────────────────────────────────────────────────────
+    path_checks = []
     try:
         config = load_config(args.config)
+
+        if args.check_config:
+            path_specs = [
+                {"label": "Input folder", "path": config.get("input_folder"), "type": "dir", "optional": False},
+                {"label": "Output folder", "path": config.get("output_folder"), "type": "dir", "optional": False},
+                {"label": "Input image", "path": config.get("input_image"), "type": "file", "optional": True},
+            ]
+            for spec in path_specs:
+                item_path = spec["path"]
+                if item_path:
+                    spec["existed_before"] = os.path.exists(item_path)
+                else:
+                    spec["existed_before"] = False
+                path_checks.append(spec)
+
         validate_config(config)
+
     except Exception as e:
         logInfo(f"❌ Failed to load or validate config: {e}")
         sys.exit(1)
+
+    if args.check_config:
+        for spec in path_checks:
+            item_path = spec["path"]
+            if not item_path:
+                spec["exists_after"] = False
+            elif spec["type"] == "file":
+                spec["exists_after"] = os.path.isfile(item_path)
+            else:
+                spec["exists_after"] = os.path.isdir(item_path)
+
+        env_root = os.getenv("SKICYCLERUN_LIB_ROOT")
+        env_cache = os.getenv("HUGGINGFACE_CACHE_LIB")
+        legacy_env_cache = os.getenv("SKICYCLERUN_MODEL_LIB")
+        hf_home = os.getenv("HF_HOME")
+        hf_cache = os.getenv("HUGGINGFACE_CACHE")
+        transformers_cache = os.getenv("TRANSFORMERS_CACHE")
+        resolved_paths = config.get("paths", {})
+        resolved_root = resolved_paths.get("lib_root")
+        resolved_cache = resolved_paths.get("huggingface_cache")
+
+        logInfo("\n🧪 CONFIG CHECK", console_only=True)
+        if env_root:
+            logInfo(f"        🌱 SKICYCLERUN_LIB_ROOT: {env_root}", console_only=True)
+        else:
+            logInfo("        🌱 SKICYCLERUN_LIB_ROOT: (not set; using config value)", console_only=True)
+        if resolved_root:
+            logInfo(f"        📁 Resolved lib_root: {resolved_root}", console_only=True)
+        if env_cache:
+            logInfo(f"        🧠 HUGGINGFACE_CACHE_LIB: {env_cache}", console_only=True)
+        if legacy_env_cache:
+            logInfo(f"        🧠 SKICYCLERUN_MODEL_LIB (legacy): {legacy_env_cache}", console_only=True)
+        if hf_home:
+            logInfo(f"        🧠 HF_HOME: {hf_home}", console_only=True)
+        if hf_cache and hf_cache != env_cache:
+            logInfo(f"        🧠 HUGGINGFACE_CACHE: {hf_cache}", console_only=True)
+        if transformers_cache:
+            logInfo(f"        🧠 TRANSFORMERS_CACHE: {transformers_cache}", console_only=True)
+        if not any([env_cache, legacy_env_cache, hf_home, hf_cache, transformers_cache]):
+            logInfo("        🧠 Hugging Face cache env vars: (none set; using config value)", console_only=True)
+        if resolved_cache:
+            logInfo(f"        🗂️ HuggingFace cache (resolved): {resolved_cache}", console_only=True)
+
+        for spec in path_checks:
+            label = spec["label"]
+            item_path = spec["path"]
+            optional = spec["optional"]
+            if not item_path:
+                status_icon = "⚠️"
+                note = "missing (not defined)"
+            else:
+                if spec["exists_after"]:
+                    if spec.get("existed_before"):
+                        status_icon = "✅"
+                        note = "exists"
+                    else:
+                        status_icon = "✅"
+                        note = "created"
+                else:
+                    status_icon = "⚠️" if optional else "❌"
+                    note = "not present" + (" (optional)" if optional else "")
+
+            if item_path:
+                logInfo(f"        {status_icon} {label}: {item_path} ({note})", console_only=True)
+            else:
+                logInfo(f"        {status_icon} {label}: <unset> ({note})", console_only=True)
+
+        logInfo("        ✅ Config validation succeeded", console_only=True)
+        sys.exit(0)
 
     # ─────────────────────────────────────────────────────────────
     # Finalize logging using CLI override or auto-generate timestamped log
@@ -460,7 +549,8 @@ def main():
         import json as json_module  # Explicit import to avoid shadowing
         try:
             with open("config/lora_registry.json", "r") as f:
-                lora_registry = json_module.load(f)
+                raw_registry = json_module.load(f)
+                lora_registry = expand_with_paths(raw_registry, config.get("paths", {}))
             
             # Case-insensitive lookup - find the correct case
             lora_key = None
@@ -507,7 +597,10 @@ def main():
             logError(f"Failed to load LoRA registry: {e}")
             sys.exit(1)
     else:
-        lora_cfg = config["lora"]  # ✅ use full config directly
+        lora_cfg = config.get("lora")
+        if not lora_cfg:
+            logError("No default LoRA specified in config. Use --lora <name> or add a 'lora' block to the config file.")
+            sys.exit(1)
         
     if args.debug:
         logDebug(f"Applying LoRA configuration: {lora_cfg}")

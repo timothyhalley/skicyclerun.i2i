@@ -3,10 +3,12 @@ Pipeline Task Runner
 Orchestrates the full photo processing pipeline from Apple Photos export to LoRA processing
 """
 import json
+import os
 import time
 import subprocess
 from pathlib import Path
 from datetime import datetime
+from utils.config_utils import resolve_config_placeholders
 from utils.time_utils import utc_now_iso_z
 from typing import Dict, List
 from core.geo_extractor import GeoExtractor
@@ -50,7 +52,8 @@ class PipelineRunner:
     def _load_config(self) -> Dict:
         """Load pipeline configuration"""
         with open(self.config_path, 'r') as f:
-            return json.load(f)
+            raw = json.load(f)
+            return resolve_config_placeholders(raw)
     
     # Legacy catalog removed; MasterStore is authoritative.
 
@@ -94,20 +97,27 @@ class PipelineRunner:
         
         # Archive old outputs if configured
         if self.config['cleanup'].get('archive_old_outputs', False):
-            output_path = Path(self.paths.get('output'))
-            archive_path = Path(self.paths.get('archive'))
-            
-            if output_path.exists():
-                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                archive_dest = archive_path / f"archive_{timestamp}"
-                archive_dest.mkdir(parents=True, exist_ok=True)
-                
-                # Move old outputs to archive
-                for item in output_path.glob('*'):
-                    if item.is_file():
-                        item.rename(archive_dest / item.name)
-                
-                logInfo(f"📦 Archived old outputs to: {archive_dest}")
+            final_dir = self.paths.get('final_albums')
+            if not final_dir:
+                logWarn("⚠️  Cleanup archive enabled but paths.final_albums is not set; falling back to pre-LoRA directory")
+                final_dir = self.paths.get('pre_lora_watermarked')
+            if final_dir:
+                output_path = Path(final_dir)
+                archive_path = Path(self.paths.get('archive'))
+
+                if output_path.exists():
+                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                    archive_dest = archive_path / f"archive_{timestamp}"
+                    archive_dest.mkdir(parents=True, exist_ok=True)
+                    
+                    # Move old outputs to archive
+                    for item in output_path.glob('*'):
+                        if item.is_file():
+                            item.rename(archive_dest / item.name)
+                    
+                    logInfo(f"📦 Archived old outputs to: {archive_dest}")
+            else:
+                logWarn("⚠️  No directory available to archive; skipping archive step")
         
         logInfo("✅ Cleanup complete")
     
@@ -256,9 +266,14 @@ class PipelineRunner:
         logInfo("✅ Preprocessing complete")
     
     def run_watermarking_stage(self):
-        """Stage 5: Apply watermarks"""
-        if not self.config.get('watermark', {}).get('enabled', False):
+        """Stage 5: Apply watermarks before LoRA processing"""
+        wm_cfg = self.config.get('watermark', {})
+        if not wm_cfg.get('enabled', False):
             logInfo("⏭️  Watermarking disabled, skipping...")
+            return
+
+        if not wm_cfg.get('apply_before_lora', True):
+            logInfo("⏭️  Pre-LoRA watermarking disabled via apply_before_lora=false")
             return
         
         logInfo("💧 Stage 5: Applying watermarks")
@@ -273,7 +288,11 @@ class PipelineRunner:
         watermark_app = WatermarkApplicator(self.config)
         
         preprocessed_path = Path(self.paths.get('preprocessed'))
-        watermarked_path = Path(self.paths.get('watermarked', self.paths.get('output')))
+        pre_wm_dir = self.paths.get('pre_lora_watermarked')
+        if not pre_wm_dir:
+            logWarn("⚠️  No pre-LoRA watermark directory configured (paths.pre_lora_watermarked)")
+            return
+        watermarked_path = Path(pre_wm_dir)
         
         watermarked_count = 0
         
@@ -587,7 +606,10 @@ class PipelineRunner:
         
         lora_config = self.config.get('lora_processing', {})
         lora_output = lora_config.get('output_folder', self.paths.get('lora_processed'))
-        watermark_output = self.paths.get('lora_watermarked') or (self.paths.get('output') and str(Path(self.paths.get('output'))/"lora_wm"))
+        watermark_output = self.paths.get('final_albums')
+        if not watermark_output:
+            logWarn("⚠️  No final albums directory configured (paths.final_albums)")
+            return
         
         logInfo(f"📁 Input: {lora_output}")
         logInfo(f"📂 Output: {watermark_output}")
@@ -620,7 +642,11 @@ class PipelineRunner:
         logInfo("☁️  Stage 8: Deploying to AWS S3")
         
         s3_config = self.config.get('s3_deployment', {})
-        source_folder = Path(s3_config.get('source_folder', self.paths.get('lora_watermarked')))
+        source_folder_cfg = s3_config.get('source_folder', self.paths.get('final_albums'))
+        if not source_folder_cfg:
+            logError("❌ No source folder configured for S3 deployment (s3_deployment.source_folder)")
+            return
+        source_folder = Path(source_folder_cfg)
         bucket_name = s3_config.get('bucket_name', 'skicyclerun.lib')
         bucket_prefix = s3_config.get('bucket_prefix', 'albums')
         aws_profile = s3_config.get('aws_profile', 'default')
@@ -783,14 +809,161 @@ class PipelineRunner:
         
         logInfo("🎉 Pipeline complete!")
 
+    def check_config(self) -> bool:
+        """Report key path status and ensure required directories exist."""
+        path_specs: List[Dict] = []
+        lib_root = self.paths.get('lib_root')
+        huggingface_cache = self.paths.get('huggingface_cache')
+        path_specs.append({"label": "Library root", "path": lib_root, "type": "dir", "optional": False, "create": True})
+        path_specs.append({"label": "HuggingFace cache", "path": huggingface_cache, "type": "dir", "optional": False, "create": True})
+
+        # Core pipeline directories
+        for label, key in [
+            ("Apple Photos export", 'apple_photos_export'),
+            ("Raw input", 'raw_input'),
+            ("Preprocessed", 'preprocessed'),
+            ("Watermarked (pre-LoRA)", 'pre_lora_watermarked'),
+            ("LoRA processed", 'lora_processed'),
+            ("Final albums", 'final_albums'),
+            ("Archive", 'archive'),
+        ]:
+            path_specs.append({"label": label, "path": self.paths.get(key), "type": "dir", "optional": False, "create": True})
+
+        # Master catalog file – create parent only
+        path_specs.append({
+            "label": "Master catalog", 
+            "path": self.paths.get('master_catalog'),
+            "type": "file",
+            "optional": True,
+            "create": False,
+            "ensure_parent": True,
+        })
+
+        # Export script should exist already
+        export_script = self.config.get('export', {}).get('script_path')
+        path_specs.append({"label": "Export AppleScript", "path": export_script, "type": "file", "optional": False, "create": False})
+
+        # Geocode cache file parent path
+        cache_file = self.config.get('metadata_extraction', {}).get('geocoding', {}).get('cache_file')
+        if cache_file:
+            path_specs.append({
+                "label": "Geocode cache", 
+                "path": cache_file,
+                "type": "file",
+                "optional": True,
+                "create": False,
+                "ensure_parent": True,
+            })
+
+        # LoRA settings
+        lora_cfg = self.config.get('lora_processing', {})
+        path_specs.append({"label": "LoRA input", "path": lora_cfg.get('input_folder'), "type": "dir", "optional": False, "create": True})
+        path_specs.append({"label": "LoRA output", "path": lora_cfg.get('output_folder'), "type": "dir", "optional": False, "create": True})
+        registry_path = lora_cfg.get('registry_path')
+        if registry_path:
+            path_specs.append({"label": "LoRA registry", "path": registry_path, "type": "file", "optional": False, "create": False})
+
+        results = []
+        has_errors = False
+        for spec in path_specs:
+            entry = spec.copy()
+            target = spec.get('path')
+            if not target:
+                entry['exists_after'] = False
+                entry['existed_before'] = False
+                entry['status_note'] = 'unset'
+                if not spec.get('optional', False):
+                    has_errors = True
+                results.append(entry)
+                continue
+
+            path_obj = Path(target)
+            entry['existed_before'] = path_obj.exists()
+            try:
+                if spec.get('create') and spec.get('type') == 'dir':
+                    path_obj.mkdir(parents=True, exist_ok=True)
+                elif spec.get('ensure_parent'):
+                    path_obj.parent.mkdir(parents=True, exist_ok=True)
+            except Exception as exc:
+                entry['error'] = str(exc)
+                has_errors = True
+
+            entry['exists_after'] = path_obj.exists()
+            if not entry['exists_after'] and not spec.get('optional', False) and not entry.get('error') and spec.get('type') == 'dir':
+                has_errors = True
+            results.append(entry)
+
+        logInfo("\n🧪 PIPELINE CONFIG CHECK")
+        env_root = os.getenv("SKICYCLERUN_LIB_ROOT")
+        if env_root:
+            logInfo(f"        🌱 SKICYCLERUN_LIB_ROOT: {env_root}")
+        else:
+            logInfo("        🌱 SKICYCLERUN_LIB_ROOT: (not set; using config fallback)")
+        if lib_root:
+            logInfo(f"        📁 Resolved lib_root: {lib_root}")
+        env_cache = os.getenv("HUGGINGFACE_CACHE_LIB")
+        legacy_env_cache = os.getenv("SKICYCLERUN_MODEL_LIB")
+        hf_home = os.getenv("HF_HOME")
+        hf_cache = os.getenv("HUGGINGFACE_CACHE")
+        transformers_cache = os.getenv("TRANSFORMERS_CACHE")
+
+        if env_cache:
+            logInfo(f"        🧠 HUGGINGFACE_CACHE_LIB: {env_cache}")
+        if legacy_env_cache:
+            logInfo(f"        🧠 SKICYCLERUN_MODEL_LIB (legacy): {legacy_env_cache}")
+        if hf_home:
+            logInfo(f"        🧠 HF_HOME: {hf_home}")
+        if hf_cache and hf_cache != env_cache:
+            logInfo(f"        🧠 HUGGINGFACE_CACHE: {hf_cache}")
+        if transformers_cache:
+            logInfo(f"        🧠 TRANSFORMERS_CACHE: {transformers_cache}")
+        if not any([env_cache, legacy_env_cache, hf_home, hf_cache, transformers_cache]):
+            logInfo("        🧠 Hugging Face cache env vars: (none set; using config fallback)")
+        if huggingface_cache:
+            logInfo(f"        🗂️ HuggingFace cache (resolved): {huggingface_cache}")
+
+        for entry in results:
+            label = entry['label']
+            target = entry.get('path')
+            optional = entry.get('optional', False)
+
+            if entry.get('error'):
+                icon = '❌'
+                note = f"error: {entry['error']}"
+            elif not target:
+                icon = '⚠️' if optional else '❌'
+                note = 'not set' + (' (optional)' if optional else '')
+            elif entry['exists_after']:
+                icon = '✅'
+                if not entry['existed_before'] and entry.get('type') == 'dir':
+                    note = 'created'
+                else:
+                    note = 'exists'
+            else:
+                icon = '⚠️' if optional else '❌'
+                note = 'not present' + (' (optional)' if optional else '')
+
+            target_display = target if target else '<unset>'
+            logInfo(f"        {icon} {label}: {target_display} ({note})")
+
+        if has_errors:
+            logInfo("        ❌ Issues detected — update configuration before running pipeline")
+        else:
+            logInfo("        ✅ Pipeline config validation succeeded")
+
+        return not has_errors
+
 
 if __name__ == "__main__":
     import argparse
+    import sys
     
     parser = argparse.ArgumentParser(description="SkiCycleRun Photo Processing Pipeline")
     parser.add_argument("--config", default="config/pipeline_config.json", help="Pipeline config file")
     parser.add_argument("--stages", nargs='+', help="Specific stages to run")
     parser.add_argument("--cache-only-geocode", action="store_true", help="Use geocoding cache only (no network calls)")
+    parser.add_argument("--check-config", action="store_true", help="Validate config paths, report resolution details, then exit")
+    parser.add_argument("--yes", action="store_true", help="Skip interactive confirmation prompt after config check")
     # Geocode sweep filters
     parser.add_argument("--sweep-path-contains", help="Only sweep entries whose path contains this substring")
     parser.add_argument("--sweep-limit", type=int, help="Limit number of entries processed in geocode sweep")
@@ -800,6 +973,24 @@ if __name__ == "__main__":
     parser.add_argument("--sweep-pulse-sec", type=int, default=5, help="Heartbeat interval in seconds for geocode sweep progress")
     
     args = parser.parse_args()
+
+    if not args.check_config:
+        missing_envs = []
+        if not os.getenv("SKICYCLERUN_LIB_ROOT"):
+            missing_envs.append("SKICYCLERUN_LIB_ROOT")
+        cache_env_present = any([
+            os.getenv("HUGGINGFACE_CACHE_LIB"),
+            os.getenv("SKICYCLERUN_MODEL_LIB"),
+            os.getenv("HUGGINGFACE_CACHE"),
+            os.getenv("HF_HOME"),
+            os.getenv("TRANSFORMERS_CACHE"),
+        ])
+        if not cache_env_present:
+            missing_envs.append("HUGGINGFACE_CACHE_LIB/HF_HOME")
+        if missing_envs:
+            logError(f"❌ Required environment variable(s) not set: {', '.join(missing_envs)}")
+            logError("   Run: source ./env_setup.sh <images_root> [huggingface_cache] before executing the pipeline.")
+            sys.exit(1)
     
     runner = PipelineRunner(
         args.config,
@@ -811,4 +1002,24 @@ if __name__ == "__main__":
         sweep_skip_heading=args.sweep_skip_heading,
         sweep_pulse_sec=args.sweep_pulse_sec,
     )
+    if args.check_config:
+        ok = runner.check_config()
+        sys.exit(0 if ok else 1)
+
+    ok = runner.check_config()
+    if not ok:
+        logError("❌ Pipeline config validation failed. Aborting run.")
+        sys.exit(1)
+
+    if not args.yes:
+        try:
+            response = input("Proceed with pipeline run? [y/N]: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            response = ""
+        if response not in ("y", "yes"):
+            logWarn("🛑 Pipeline execution cancelled by user.")
+            sys.exit(0)
+    else:
+        logInfo("✅ Proceeding without confirmation (--yes supplied).")
+
     runner.run_pipeline(args.stages)

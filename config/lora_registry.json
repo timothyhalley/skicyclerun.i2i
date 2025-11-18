@@ -261,7 +261,7 @@
     "text_encoder_scale": 0.5
   },
   "WatercolorFlux": {
-    "path": "/Volumes/MySSD/skicyclerun.i2i/models/lora/WATERCOLOR-lora.TA_trained.safetensors",
+    "path": "{lib_root}/models/lora/WATERCOLOR-lora.TA_trained.safetensors",
     "weights": "WATERCOLOR-lora.TA_trained.safetensors",
     "description": "Watercolor FLUX LoRA trained on FLUX.1 D. Emulates translucent pigment layering, soft wet-on-wet diffusion, and expressive brush streaks. Ideal for stylized image-to-image transformations with luminous, organic watercolor aesthetics.",
     "prompt": "<Convert this image into watercolor painting style, watercolor, wet on wet, paintstreaks, watercolor painting> soft pigment flow, translucent layers, expressive brushwork, pastel gradients, paper grain texture, ambient light wash, preserved facial clarity, clean eyes and teeth",
@@ -270,7 +270,7 @@
     "text_encoder_scale": 0.5
   },
   "Gorillaz": {
-    "path": "/Volumes/MySSD/skicyclerun.i2i/models/lora/gorillaz-kontext-lora.safetensors",
+    "path": "{lib_root}/models/lora/gorillaz-kontext-lora.safetensors",
     "weights": "gorillaz-kontext-lora.safetensors",
     "description": "Gorillaz Style LoRA trained on FLUX.1-Kontext-dev. Transforms images into the iconic cartoon-punk aesthetic of the Gorillaz universe—featuring bold linework, flat pop-art colors, and gritty textures.",
     "prompt": "<make this image gorillaz style>, bold graphic outlines, flat color fills, grunge textures, cartoon-punk aesthetic, expressive character design, print-punk vibe, preserved facial structure, stylized eyes and teeth",
@@ -288,7 +288,7 @@
     "text_encoder_scale": 0.5
   },
   "Afremov": {
-    "path": "/Volumes/MySSD/skicyclerun.i2i/models/lora/afremov_flux_objects1.safetensors",
+    "path": "{lib_root}/models/lora/afremov_flux_objects1.safetensors",
     "weights": "afremov_flux_objects1.safetensors",
     "description": "Russian-Israeli-born Leonid Afremov was a modern impressionist artist. Created with oil paints and a palette knife, his works are alive with color and movement.",
     "prompt": "<Afremov Style: QQQ.>, colorful oil painting, palette knife texture, Leonid Afremov style, saturated colors, emotional lighting, impressionist composition, vibrant reflections, preserved facial clarity, expressive eyes and teeth, stylized contours",

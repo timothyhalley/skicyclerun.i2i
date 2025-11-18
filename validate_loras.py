@@ -10,6 +10,8 @@ import sys
 from datetime import datetime
 from huggingface_hub import list_repo_files, HfApi
 from huggingface_hub.utils import RepositoryNotFoundError, GatedRepoError
+
+from utils.config_utils import resolve_config_placeholders
 import torch
 from diffusers import FluxKontextPipeline
 
@@ -52,7 +54,11 @@ class LoRAValidator:
         """Load LoRA registry from JSON file"""
         try:
             with open(self.registry_path, 'r') as f:
-                return json.load(f)
+                raw = json.load(f)
+                wrapped = {"registry": raw}
+                resolved = resolve_config_placeholders(wrapped)
+                registry = resolved.get("registry", raw)
+                return registry
         except FileNotFoundError:
             self.log(f"{RED}❌ Registry file not found: {self.registry_path}{RESET}")
             sys.exit(1)
@@ -95,11 +101,21 @@ class LoRAValidator:
             return None, "Skipped (no pipeline provided for dry-run)"
         
         try:
-            pipeline.load_lora_weights(
-                lora_entry["path"],
-                weight_name=lora_entry["weights"],
-                adapter_name="validation_test"
-            )
+            raw_path = lora_entry.get("resolved_path") or lora_entry.get("path")
+            resolved_path = os.path.expanduser(raw_path) if isinstance(raw_path, str) else raw_path
+            resolved_path = os.path.abspath(resolved_path) if isinstance(resolved_path, str) else resolved_path
+
+            if isinstance(resolved_path, str) and os.path.exists(resolved_path) and os.path.isfile(resolved_path):
+                pipeline.load_lora_weights(
+                    resolved_path,
+                    adapter_name="validation_test"
+                )
+            else:
+                pipeline.load_lora_weights(
+                    lora_entry["path"],
+                    weight_name=lora_entry["weights"],
+                    adapter_name="validation_test"
+                )
             # Unload to free memory
             pipeline.unload_lora_weights()
             return True, "Successfully loaded and unloaded"
@@ -109,48 +125,82 @@ class LoRAValidator:
     def validate_entry(self, name, entry, dry_run=False, pipeline=None):
         """Validate a single LoRA entry"""
         self.log(f"\n{BLUE}{'='*80}{RESET}")
+        resolved_path = os.path.expanduser(entry['path']) if isinstance(entry['path'], str) else entry['path']
+        resolved_path = os.path.abspath(resolved_path) if isinstance(resolved_path, str) else resolved_path
+
+        self.log(f"\n{BLUE}{'='*80}{RESET}")
         self.log(f"{BLUE}Validating: {name}{RESET}")
         self.log(f"  Path: {entry['path']}")
+        if resolved_path and entry['path'] != resolved_path:
+            self.log(f"  Resolved path: {resolved_path}")
         self.log(f"  Weights: {entry['weights']}")
-        
         result = {
             'name': name,
-            'path': entry['path'],
-            'weights': entry['weights'],
+            'original_path': entry['path'],
+            'path': resolved_path,
             'repo_status': None,
             'file_status': None,
             'load_status': None,
             'overall': 'PASS'
         }
-        
-        # 1. Check repository exists
-        self.log(f"\n  🔍 Checking repository...")
-        repo_ok, repo_msg = self.validate_repo_exists(entry['path'])
-        result['repo_status'] = repo_msg
-        if repo_ok:
-            self.log(f"  {GREEN}✅ {repo_msg}{RESET}")
-        else:
-            self.log(f"  {RED}❌ {repo_msg}{RESET}")
-            result['overall'] = 'FAIL'
-        
-        # 2. Check weight file exists (only if repo is accessible)
-        if repo_ok and "gated" not in repo_msg.lower():
-            self.log(f"  🔍 Checking weight file...")
-            file_ok, file_msg = self.validate_weight_file(entry['path'], entry['weights'])
-            result['file_status'] = file_msg
-            if file_ok:
-                self.log(f"  {GREEN}✅ {file_msg}{RESET}")
+
+        repo_ok = False
+        weight_path_local = None
+        is_local_path = isinstance(resolved_path, str) and os.path.exists(resolved_path)
+
+        if is_local_path:
+            if os.path.isfile(resolved_path):
+                result['repo_status'] = "Local file path"
+                self.log(f"\n  📍 Detected local LoRA file")
+                self.log(f"  {GREEN}✅ Local file exists{RESET}")
+                result['file_status'] = "Local file present"
+                weight_path_local = resolved_path
             else:
-                self.log(f"  {RED}❌ {file_msg}{RESET}")
-                result['overall'] = 'FAIL'
+                weight_path = os.path.join(resolved_path, entry['weights'])
+                self.log(f"\n  📁 Detected local LoRA directory")
+                if os.path.isfile(weight_path):
+                    result['repo_status'] = "Local directory path"
+                    result['file_status'] = "Weight file present"
+                    self.log(f"  {GREEN}✅ Found weight file at {weight_path}{RESET}")
+                    weight_path_local = weight_path
+                else:
+                    result['repo_status'] = "Local directory path"
+                    result['file_status'] = "Missing weight file"
+                    self.log(f"  {RED}❌ Weight file not found at {weight_path}{RESET}")
+                    result['overall'] = 'FAIL'
         else:
-            result['file_status'] = "Skipped (repo not accessible)"
-            self.log(f"  {YELLOW}⚠️  Weight file check skipped{RESET}")
-        
-        # 3. Dry-run load (optional)
-        if dry_run and pipeline and repo_ok and result['file_status'] != "Skipped (repo not accessible)":
+            self.log(f"\n  🔍 Checking repository...")
+            repo_ok, repo_msg = self.validate_repo_exists(entry['path'])
+            result['repo_status'] = repo_msg
+            if repo_ok:
+                self.log(f"  {GREEN}✅ {repo_msg}{RESET}")
+            else:
+                self.log(f"  {RED}❌ {repo_msg}{RESET}")
+                result['overall'] = 'FAIL'
+
+            if repo_ok and "gated" not in repo_msg.lower():
+                self.log(f"  🔍 Checking weight file...")
+                file_ok, file_msg = self.validate_weight_file(entry['path'], entry['weights'])
+                result['file_status'] = file_msg
+                if file_ok:
+                    self.log(f"  {GREEN}✅ {file_msg}{RESET}")
+                else:
+                    self.log(f"  {RED}❌ {file_msg}{RESET}")
+                    result['overall'] = 'FAIL'
+            else:
+                result['file_status'] = "Skipped (repo not accessible)"
+                self.log(f"  {YELLOW}⚠️  Weight file check skipped{RESET}")
+
+        dry_run_allowed = False
+        if dry_run and pipeline:
+            if weight_path_local:
+                dry_run_allowed = True
+            elif not is_local_path and repo_ok and result['file_status'] != "Skipped (repo not accessible)" and result['overall'] != 'FAIL':
+                dry_run_allowed = True
+
+        if dry_run_allowed:
             self.log(f"  🔍 Testing LoRA load...")
-            load_ok, load_msg = self.dry_run_load(entry, pipeline)
+            load_ok, load_msg = self.dry_run_load({**entry, "resolved_path": weight_path_local or resolved_path}, pipeline)
             result['load_status'] = load_msg
             if load_ok:
                 self.log(f"  {GREEN}✅ {load_msg}{RESET}")
@@ -161,10 +211,8 @@ class LoRAValidator:
                 result['overall'] = 'FAIL'
         else:
             result['load_status'] = "Skipped"
-        
-        # Overall status
+
         status_color = GREEN if result['overall'] == 'PASS' else RED
-        self.log(f"\n  {status_color}{'='*80}{RESET}")
         self.log(f"  {status_color}Status: {result['overall']}{RESET}")
         self.log(f"  {status_color}{'='*80}{RESET}")
         

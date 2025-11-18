@@ -50,9 +50,8 @@ python pipeline.py --stages s3_deployment
 ```text
 skicyclerun.i2i/
 ├── config/
-│   ├── pipeline_config.json    # Main pipeline configuration
-│   ├── lora_registry.json      # 26 LoRA style definitions
-│   └── default_config.json     # Base processing config
+│   ├── pipeline_config.json    # Unified pipeline & LoRA configuration
+│   └── lora_registry.json      # 26 LoRA style definitions
 ├── core/
 │   ├── pipeline_loader.py      # FLUX.1-Kontext-dev loader
 │   ├── lora_manager.py         # LoRA loading (HuggingFace + local)
@@ -71,6 +70,60 @@ skicyclerun.i2i/
 ---
 
 ## ⚙️ Configuration
+
+### Environment Root & Placeholders
+
+Set the image library and Hugging Face cache roots via the helper script (recommended per terminal session):
+
+```bash
+source ./env_setup.sh "/Volumes/MySSD/skicyclerun.i2i/images" \
+                          "/Volumes/MySSD/skicyclerun.i2i/hf-cache"
+```
+
+Omit the second argument to default the cache folder to sit alongside the images directory. The script logs what it is doing, creates any missing folders, and exports both variables for your current shell. Run this in each new terminal before starting the tools.
+
+Verify key values:
+
+```bash
+printenv SKICYCLERUN_LIB_ROOT
+printenv HF_HOME
+printenv HF_DATASETS_CACHE
+```
+
+> `pipeline.py` refuses to run unless **both** `SKICYCLERUN_LIB_ROOT` and `HUGGINGFACE_CACHE_LIB` are set (the legacy `SKICYCLERUN_MODEL_LIB` variable is still accepted as a fallback). Source `env_setup.sh` (or otherwise export the variables) before invoking the pipeline.
+
+If the variables are not set, the pipeline falls back to the current working directory hierarchy. Config files expand `{lib_root}` plus environment variables like `${HOME}`; additional placeholders such as `{images_root}` and `{huggingface_cache}` resolve automatically from the sourced values (a `{models_root}` alias remains for backwards compatibility).
+
+Running `env_setup.sh` also exports Hugging Face's standard environment variables (`HF_HOME`, `HUGGINGFACE_CACHE`, `HF_DATASETS_CACHE`) to the same SSD-backed directory, mirroring current best practices from the Hub. The deprecated `TRANSFORMERS_CACHE` variable is explicitly cleared to avoid warnings in the Transformers v4→v5 upgrade path.
+
+### Unified Config
+
+`config/pipeline_config.json` now drives both `pipeline.py` and the standalone `main.py` LoRA runner. The CLI flattens the `lora_processing` block into the legacy shape that `main.py` expects, so one file controls directories, batch LoRA defaults, and inference parameters.
+
+> AppleScript helpers (`scripts/osxPhotoExporter.scpt`, `scripts/photoTravelLog.scpt`) now default to `{lib_root}` via `SKICYCLERUN_LIB_ROOT`. Provide a CLI argument to override or set the environment variable before invoking `osascript`.
+
+### Config Health Check
+
+Run a quick verification of resolved paths and auto-created directories:
+
+```bash
+python main.py --check-config
+python pipeline.py --config config/pipeline_config.json --check-config
+```
+
+Both commands resolve `{lib_root}` placeholders, auto-create missing directories (empty), and confirm optional metadata files before long runs.
+
+Model weights cache to `{huggingface_cache}` (controlled by `HUGGINGFACE_CACHE_LIB`), so reusing existing downloads just requires sourcing `env_setup.sh` before running.
+
+Every `pipeline.py` invocation now runs the config check automatically and pauses for confirmation. Pass `--yes` to skip the prompt in automated scenarios.
+
+### Python Smoke Test
+
+Prefer a zero-dependency check without CLI output? Execute:
+
+```bash
+python -c "from utils.cli import load_config; from utils.validator import validate_config; cfg = load_config('config/pipeline_config.json'); validate_config(cfg); print('✅ config ok')"
+```
 
 ### Pipeline Config (`config/pipeline_config.json`)
 
@@ -263,7 +316,7 @@ caffeinate -i python pipeline.py --stages lora_processing
 - MPS (Apple Silicon) or CUDA acceleration
 - ~11m 46s per image on M3 Max
 
-**Output:** `/phase2_lora/processed/[Album]/IMG_####_[Style]_[timestamp].webp`
+**Output:** `/images/lora_processed/[Album]/IMG_####_[Style]_[timestamp].webp`
 
 ### Phase 2.5: Watermarking
 
@@ -273,7 +326,7 @@ caffeinate -i python pipeline.py --stages lora_processing
 - Format: `SkiCycleRun © 2015 ♏ Montreal, Quebec`
 - Preserves album structure
 
-**Output:** `/phase2_lora/watermarked/[Album]/IMG_####_[Style]_[timestamp].webp`
+**Output:** `/images/lora_final/[Album]/IMG_####_[Style]_[timestamp].webp`
 
 ### Phase 3: Deployment
 
@@ -299,7 +352,7 @@ caffeinate -i python pipeline.py --stages lora_processing
 
 **Local LoRA Models:**
 
-Stored in `/Volumes/MySSD/skicyclerun.i2i/models/lora/`:
+Stored in `{lib_root}/models/lora/`:
 
 - `afremov_flux_objects1.safetensors`
 - `gorillaz-kontext-lora.safetensors`
