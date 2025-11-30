@@ -11,10 +11,10 @@ on run argv
 	else
 		set envLibRoot to my resolveEnv("SKICYCLERUN_LIB_ROOT")
 		if envLibRoot is not "" then
-			set baseExportPath to my appendPath(envLibRoot, "images/raw")
+			set baseExportPath to my appendPath(envLibRoot, "pipeline/albums")
 		else
 			-- Default to historical external SSD location as last resort
-			set baseExportPath to "/Volumes/MySSD/skicyclerun.i2i/images/raw"
+			set baseExportPath to "/Volumes/MySSD/skicyclerun.i2i/pipeline/albums"
 		end if
 	end if
 

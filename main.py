@@ -43,8 +43,12 @@ def logWarn(message):
 # ─────────────────────────────────────────────────────────────
 # Memory management helper
 # ─────────────────────────────────────────────────────────────
-def cleanup_memory():
-    """Force cleanup of PyTorch cache and Python garbage collection"""
+def cleanup_memory(aggressive=False):
+    """Force cleanup of PyTorch cache and Python garbage collection
+    
+    Args:
+        aggressive: If True, performs multiple garbage collection passes
+    """
     try:
         import torch
         if torch.backends.mps.is_available():
@@ -54,7 +58,14 @@ def cleanup_memory():
         elif torch.cuda.is_available():
             torch.cuda.empty_cache()
             torch.cuda.synchronize()
-        gc.collect()
+        
+        # Multiple GC passes for aggressive cleanup
+        if aggressive:
+            for _ in range(3):
+                gc.collect()
+        else:
+            gc.collect()
+            
         if hasattr(torch, '_C') and hasattr(torch._C, '_cuda_clearCublasWorkspaces'):
             torch._C._cuda_clearCublasWorkspaces()
     except Exception as e:
@@ -638,6 +649,9 @@ def main():
     # Track batch progress
     batch_start_time = time.time()
     total_files = len(image_paths)
+    skipped_count = 0
+    processed_count = 0
+    failed_count = 0
     
     # Print batch header if processing multiple files
     if total_files > 1:
@@ -669,7 +683,8 @@ def main():
             break
         
         # Check if already processed (for resume capability)
-        if is_already_processed(image_path, config, args.input_folder, lora_key if args.lora else None):
+        if is_already_processed(image_path, config, input_base_folder, lora_key if args.lora else None):
+            skipped_count += 1
             if total_files > 1:
                 logInfo("\n" + "─" * 80)
                 logInfo(f"⏭️  Skipping [{i}/{total_files}]: {os.path.basename(image_path)}")
@@ -687,94 +702,152 @@ def main():
             logInfo(f"\n🖼️ Processing: {os.path.basename(image_path)}")
             logInfo(f"   📍 Full path: {image_path}")
             
-        if args.debug:
-            logDebug(f"Loading and preparing image: {image_path}")
-            logDebug(f"Max dimension: {config['max_dim']}, Preprocess: {config['preprocess']}")
-
-        image = load_and_prepare_image(image_path, config["max_dim"], config["preprocess"])
-        
-        if args.debug:
-            logDebug(f"Image loaded - Size: {image.size}, Mode: {image.mode}")
-
-        # Always show the actual prompts being used for this image
-        logInfo(f"💬 Prompt: {config['prompt']}")
-        logInfo(f"🚫 Negative: {config['negative_prompt']}")
-
-        if args.preview:
-            preview_path = os.path.join(config["output_folder"], f"preview_{os.path.basename(image_path)}")
-            image.save(preview_path)
-            logInfo(f"🖼️ Saved preview image: {preview_path}")
-
-        start_time = time.time()
-        
-        if args.verbose:
-            logInfo(f"🚀 Starting inference with {config['num_inference_steps']} steps...")
-            
-        spinner = Spinner(f"Running inference on {os.path.basename(image_path)}")
-        if not args.verbose:  # Don't show spinner if verbose (conflicts with output)
-            spinner.start()
-
-        # Generate or use provided seed for reproducibility
-        import random
-        seed = args.seed if args.seed is not None else random.randint(0, 2**32 - 1)
-        logInfo(f"🎲 Seed: {seed}")
-        
-        if args.debug:
-            logDebug(f"Calling run_inference with prompt: '{config['prompt']}'")
-            logDebug(f"Negative prompt: '{config['negative_prompt']}'")
-            logDebug(f"Steps: {config['num_inference_steps']}, Guidance: {config['guidance_scale']}")
-            logDebug(f"Seed: {seed}")
-
-        result = run_inference(
-            pipeline,
-            image,
-            config["prompt"],
-            config["negative_prompt"],
-            config["num_inference_steps"],
-            config["guidance_scale"],
-            seed,
-            device
-        )
-        output_image = result.images[0]  # extract the actual PIL image
-
-        if not args.verbose:
-            spinner.stop()
-            
-        file_duration = time.time() - file_start_time
-        
-        # Format duration nicely
-        file_mins = int(file_duration // 60)
-        file_secs = int(file_duration % 60)
-        file_time_str = f"{file_mins}m {file_secs}s" if file_mins > 0 else f"{file_secs}s"
-        
-        # Calculate accumulated time
-        accumulated_time = time.time() - batch_start_time
-        acc_hours = int(accumulated_time // 3600)
-        acc_mins = int((accumulated_time % 3600) // 60)
-        acc_secs = int(accumulated_time % 60)
-        acc_time_str = f"{acc_hours:02d}:{acc_mins:02d}:{acc_secs:02d}"
-        
-        # Log completion for this file
-        if total_files > 1:
-            logInfo(f"\n✅ Completed in {file_time_str} | Accumulated time: {acc_time_str}")
-        else:
-            logInfo(f"⏱️  Inference completed in {file_time_str}")
-        
-        if args.debug:
-            logDebug(f"Result image - Size: {output_image.size}, Mode: {output_image.mode}")
-
         try:
-            save_result(image_path, output_image, config, input_base_folder, lora_name=lora_cfg["adapter_name"])  # ✅ pass the PIL image and LoRA name here
-            if args.verbose:
-                logInfo(f"✅ Successfully saved result for {os.path.basename(image_path)}")
-        except Exception as e:
-            logError(f"Failed to save result for {image_path}: {e}")
             if args.debug:
-                import traceback
-                logDebug(f"Save error traceback: {traceback.format_exc()}")
+                logDebug(f"Loading and preparing image: {image_path}")
+                logDebug(f"Max dimension: {config['max_dim']}, Preprocess: {config['preprocess']}")
+
+            image = load_and_prepare_image(image_path, config["max_dim"], config["preprocess"])
+            
+            if args.debug:
+                logDebug(f"Image loaded - Size: {image.size}, Mode: {image.mode}")
+
+            # Always show the actual prompts being used for this image
+            logInfo(f"💬 Prompt: {config['prompt']}")
+            logInfo(f"🚫 Negative: {config['negative_prompt']}")
+
+            if args.preview:
+                preview_path = os.path.join(config["output_folder"], f"preview_{os.path.basename(image_path)}")
+                image.save(preview_path)
+                logInfo(f"🖼️ Saved preview image: {preview_path}")
+
+            start_time = time.time()
+            
+            if args.verbose:
+                logInfo(f"🚀 Starting inference with {config['num_inference_steps']} steps...")
+                
+            spinner = Spinner(f"Running inference on {os.path.basename(image_path)}")
+            if not args.verbose:  # Don't show spinner if verbose (conflicts with output)
+                spinner.start()
+
+            # Generate or use provided seed for reproducibility
+            import random
+            seed = args.seed if args.seed is not None else random.randint(0, 2**32 - 1)
+            logInfo(f"🎲 Seed: {seed}")
+            
+            if args.debug:
+                logDebug(f"Calling run_inference with prompt: '{config['prompt']}'")
+                logDebug(f"Negative prompt: '{config['negative_prompt']}'")
+                logDebug(f"Steps: {config['num_inference_steps']}, Guidance: {config['guidance_scale']}")
+                logDebug(f"Seed: {seed}")
+
+            result = run_inference(
+                pipeline,
+                image,
+                config["prompt"],
+                config["negative_prompt"],
+                config["num_inference_steps"],
+                config["guidance_scale"],
+                seed,
+                device
+            )
+            output_image = result.images[0]  # extract the actual PIL image
+            
+            # Explicitly delete the result object to free memory
+            del result
+
+            if not args.verbose:
+                spinner.stop()
+                
+            file_duration = time.time() - file_start_time
+            
+            # Format duration nicely
+            file_mins = int(file_duration // 60)
+            file_secs = int(file_duration % 60)
+            file_time_str = f"{file_mins}m {file_secs}s" if file_mins > 0 else f"{file_secs}s"
+            
+            # Calculate accumulated time
+            accumulated_time = time.time() - batch_start_time
+            acc_hours = int(accumulated_time // 3600)
+            acc_mins = int((accumulated_time % 3600) // 60)
+            acc_secs = int(accumulated_time % 60)
+            acc_time_str = f"{acc_hours:02d}:{acc_mins:02d}:{acc_secs:02d}"
+            
+            # Log completion for this file
+            if total_files > 1:
+                logInfo(f"\n✅ Completed in {file_time_str} | Accumulated time: {acc_time_str}")
+            else:
+                logInfo(f"⏱️  Inference completed in {file_time_str}")
+            
+            if args.debug:
+                logDebug(f"Result image - Size: {output_image.size}, Mode: {output_image.mode}")
+
+            try:
+                save_result(image_path, output_image, config, input_base_folder, lora_name=lora_cfg["adapter_name"])  # ✅ pass the PIL image and LoRA name here
+                processed_count += 1
+                if args.verbose:
+                    logInfo(f"✅ Successfully saved result for {os.path.basename(image_path)}")
+            except Exception as e:
+                failed_count += 1
+                logError(f"Failed to save result for {image_path}: {e}")
+                if args.debug:
+                    import traceback
+                    logDebug(f"Save error traceback: {traceback.format_exc()}")
+                # Continue to next image even if save fails
+                
+        except Exception as e:
+            # Comprehensive error logging for any failure during processing
+            import traceback
+            error_type = type(e).__name__
+            error_msg = str(e)
+            
+            # Check if this is an OOM error
+            is_oom = "out of memory" in error_msg.lower() or "OOM" in error_msg
+            
+            logError("=" * 80)
+            logError(f"💥 PROCESSING FAILED: {os.path.basename(image_path)}")
+            logError(f"📍 File: {image_path}")
+            logError(f"🚨 Error Type: {error_type}")
+            logError(f"💬 Error Message: {error_msg}")
+            logError("─" * 80)
+            logError("📋 Full Traceback:")
+            logError(traceback.format_exc())
+            logError("=" * 80)
+            
+            # Stop spinner if it was running
+            if not args.verbose:
+                try:
+                    spinner.stop()
+                except:
+                    pass
+            
+            # Perform aggressive cleanup on OOM errors
+            if is_oom:
+                logWarn("🧹 Out of memory detected - performing aggressive cleanup...")
+                cleanup_memory(aggressive=True)
+                time.sleep(2)  # Give system time to release memory
+                logInfo("✅ Memory cleanup complete, continuing with next image")
+            
+            failed_count += 1
+            
+            # For batch processing, show progress and optionally continue
+            if total_files > 1:
+                logError(f"⚠️  Skipping to next image ({i}/{total_files} processed)")
+                logError(f"💡 To stop batch processing, create file: /tmp/skicyclerun_stop")
+            else:
+                # For single file, exit with error
+                logError("❌ Processing terminated due to error")
+                sys.exit(1)
         
         # Clean up memory after each image to prevent accumulation
-        cleanup_memory()
+        # Use aggressive cleanup every 10 images to prevent memory buildup
+        if total_files > 1 and i % 10 == 0:
+            cleanup_memory(aggressive=True)
+            if args.debug:
+                logDebug(f"Aggressive memory cleanup performed at image {i}/{total_files}")
+        else:
+            cleanup_memory()
+            
         if args.debug and len(image_paths) > 1:
             report_memory_usage()
     
@@ -792,7 +865,8 @@ def main():
         avg_time_str = f"{avg_mins}m {avg_secs}s"
         
         print("\n" + "=" * 80)
-        print(f"🎉 BATCH COMPLETE: {total_files} images processed")
+        print(f"🎉 BATCH COMPLETE")
+        print(f"📊 Total: {total_files} images | Processed: {processed_count} | Skipped: {skipped_count} | Failed: {failed_count}")
         print(f"⏱️  Total time: {total_time_str}")
         print(f"📊 Average time per image: {avg_time_str}")
         print("=" * 80 + "\n")

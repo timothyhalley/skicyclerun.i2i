@@ -21,8 +21,8 @@ def _expand_defaults(lora_cfg: Dict[str, Any], paths: Dict[str, Any]) -> Dict[st
 
     config: Dict[str, Any] = {
         "paths": paths,
-        "input_folder": lora_cfg.get("input_folder") or (os.path.join(lib_root, "images", "scaled") if lib_root else None),
-        "output_folder": lora_cfg.get("output_folder") or (os.path.join(lib_root, "images", "lora", "processed") if lib_root else None),
+        "input_folder": lora_cfg.get("input_folder") or paths.get("preprocessed") or (os.path.join(lib_root, "pipeline", "scaled") if lib_root else None),
+        "output_folder": lora_cfg.get("output_folder") or paths.get("lora_processed") or (os.path.join(lib_root, "pipeline", "lora_processed") if lib_root else None),
         "input_image": lora_cfg.get("input_image"),
         "output_format": lora_cfg.get("output_format", "webp"),
         "max_dim": lora_cfg.get("max_dim", 1024),

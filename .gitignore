@@ -86,3 +86,6 @@ debug_*.png
 # Backup files
 *.bak
 *.backup
+
+# Data files
+geoScripts/data/

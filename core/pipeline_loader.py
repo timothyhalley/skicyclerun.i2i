@@ -20,18 +20,18 @@ def load_pipeline(model_name, device, precision, config):
     cache_dir = config["cache_dir"]
     
     # FLUX works best with bfloat16 (as shown in working example)
-    # Use torch_dtype during load for efficiency
+    # Use dtype parameter for pipeline loading
     if precision == "float16":
-        torch_dtype = torch.bfloat16  # FLUX requires bfloat16, not float16!
+        dtype = torch.bfloat16  # FLUX requires bfloat16, not float16!
     elif precision == "bfloat16":
-        torch_dtype = torch.bfloat16
+        dtype = torch.bfloat16
     else:
-        torch_dtype = torch.float32
+        dtype = torch.float32
     
-    logInfo(f"🚚 Loading pipeline with {torch_dtype}...")
+    logInfo(f"🚚 Loading pipeline with {dtype}...")
     pipeline = FluxKontextPipeline.from_pretrained(
         model_name,
-        torch_dtype=torch_dtype,
+        torch_dtype=dtype,
         cache_dir=cache_dir
     )
     

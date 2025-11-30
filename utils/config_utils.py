@@ -89,6 +89,7 @@ def resolve_config_placeholders(config: Dict[str, Any]) -> Dict[str, Any]:
     if metadata_root:
         paths["metadata_root"] = metadata_root
 
+    # First pass: resolve lib_root and basic variables
     variables = {
         "lib_root": lib_root,
         "images_root": images_root,
@@ -96,8 +97,17 @@ def resolve_config_placeholders(config: Dict[str, Any]) -> Dict[str, Any]:
         "metadata_root": metadata_root,
         "models_root": huggingface_cache,  # legacy placeholder support
     }
-
-    return _expand_obj(config, variables)
+    
+    partially_resolved = _expand_obj(config, variables)
+    
+    # Second pass: resolve nested placeholders (pipeline_base depends on lib_root, metadata_dir depends on pipeline_base, etc.)
+    # Extract any newly resolved paths from the paths section to use as additional variables
+    resolved_paths = partially_resolved.get("paths", {})
+    extended_variables = dict(variables)
+    extended_variables.update({k: v for k, v in resolved_paths.items() if isinstance(v, str)})
+    
+    # Final resolution with all variables
+    return _expand_obj(partially_resolved, extended_variables)
 
 
 def expand_with_paths(value: Any, paths: Dict[str, str] | None = None) -> Any:

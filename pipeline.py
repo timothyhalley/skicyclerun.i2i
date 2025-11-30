@@ -88,38 +88,83 @@ class PipelineRunner:
             logError(f"❌ Export error: {e}")
     
     def run_cleanup_stage(self):
-        """Stage 2: Cleanup old artifacts"""
+        """Stage 0: Archive old work before new export (prevents duplicates)"""
         if not self.config.get('cleanup', {}).get('enabled', False):
             logInfo("⏭️  Cleanup stage disabled, skipping...")
             return
         
-        logInfo("🧹 Stage 2: Cleaning up old artifacts")
+        logInfo("🧹 Stage 0: Archiving old work before new export")
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         
         # Archive old outputs if configured
         if self.config['cleanup'].get('archive_old_outputs', False):
-            final_dir = self.paths.get('final_albums')
-            if not final_dir:
-                logWarn("⚠️  Cleanup archive enabled but paths.final_albums is not set; falling back to pre-LoRA directory")
-                final_dir = self.paths.get('pre_lora_watermarked')
+            archive_base = Path(self.paths.get('archive'))
+            archive_albums_path = Path(self.paths.get('archive_albums'))
+            archive_metadata_path = Path(self.paths.get('archive_metadata'))
+            
+            # 1. Archive existing albums (from previous exports) to prevent duplicates
+            albums_path = Path(self.paths.get('apple_photos_export'))
+            if albums_path.exists() and any(albums_path.iterdir()):
+                archive_dest = archive_albums_path / timestamp
+                archive_dest.mkdir(parents=True, exist_ok=True)
+                
+                moved_count = 0
+                for item in albums_path.glob('*'):
+                    if item.is_file() or item.is_dir():
+                        item.rename(archive_dest / item.name)
+                        moved_count += 1
+                
+                if moved_count > 0:
+                    logInfo(f"📦 Archived {moved_count} items from albums/ → {archive_dest}")
+                else:
+                    logInfo("ℹ️  No albums to archive (directory was empty)")
+            else:
+                logInfo("ℹ️  No existing albums directory to archive")
+            
+            # 2. Version metadata catalog if it exists
+            metadata_catalog = Path(self.paths.get('master_catalog'))
+            if metadata_catalog.exists():
+                # Find next version number
+                version = 1
+                existing_versions = list(archive_metadata_path.glob('master_v*_*.json'))
+                if existing_versions:
+                    version_nums = []
+                    for p in existing_versions:
+                        try:
+                            v = int(p.stem.split('_')[1].replace('v', ''))
+                            version_nums.append(v)
+                        except (IndexError, ValueError):
+                            continue
+                    if version_nums:
+                        version = max(version_nums) + 1
+                
+                archive_metadata_path.mkdir(parents=True, exist_ok=True)
+                versioned_catalog = archive_metadata_path / f"master_v{version}_{timestamp}.json"
+                
+                import shutil
+                shutil.copy2(metadata_catalog, versioned_catalog)
+                logInfo(f"📋 Versioned metadata: {versioned_catalog.name}")
+            else:
+                logInfo("ℹ️  No metadata catalog to version")
+            
+            # 3. Archive old final outputs (watermarked images)
+            final_dir = self.paths.get('watermarked_final')
             if final_dir:
                 output_path = Path(final_dir)
-                archive_path = Path(self.paths.get('archive'))
-
-                if output_path.exists():
-                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                    archive_dest = archive_path / f"archive_{timestamp}"
+                if output_path.exists() and any(output_path.iterdir()):
+                    archive_dest = archive_base / f"watermarked_{timestamp}"
                     archive_dest.mkdir(parents=True, exist_ok=True)
                     
-                    # Move old outputs to archive
+                    moved_count = 0
                     for item in output_path.glob('*'):
                         if item.is_file():
                             item.rename(archive_dest / item.name)
+                            moved_count += 1
                     
-                    logInfo(f"📦 Archived old outputs to: {archive_dest}")
-            else:
-                logWarn("⚠️  No directory available to archive; skipping archive step")
+                    if moved_count > 0:
+                        logInfo(f"📦 Archived {moved_count} watermarked outputs → {archive_dest}")
         
-        logInfo("✅ Cleanup complete")
+        logInfo("✅ Archive/cleanup complete - ready for new export")
     
     def run_metadata_extraction_stage(self):
         """Stage 3: Extract metadata and geolocation"""
@@ -562,11 +607,17 @@ class PipelineRunner:
             logWarn("⚠️  No LoRAs specified in config. Add 'loras_to_process' array to lora_processing config.")
             return
         
-        input_folder = lora_config.get('input_folder', self.paths.get('preprocessed'))
-        output_folder = lora_config.get('output_folder', self.paths.get('lora_processed'))
+        # Use resolved paths from self.paths (already processed by resolve_config_placeholders)
+        input_folder = str(Path(self.paths.get('preprocessed')))
+        output_folder = str(Path(self.paths.get('lora_processed')))
         
-        logInfo(f"📁 Input: {input_folder}")
-        logInfo(f"📂 Output: {output_folder}")
+        # Show relative paths for cleaner output
+        lib_root = self.paths.get('lib_root')
+        input_rel = input_folder.replace(lib_root + '/', '') if lib_root else input_folder
+        output_rel = output_folder.replace(lib_root + '/', '') if lib_root else output_folder
+        
+        logInfo(f"📁 Input: {input_rel}")
+        logInfo(f"📂 Output: {output_rel}")
         logInfo(f"🎨 Processing {len(loras_to_process)} LoRA styles: {', '.join(loras_to_process)}")
         
         # Import main.py functions
@@ -576,8 +627,8 @@ class PipelineRunner:
         for lora_name in loras_to_process:
             logInfo("=" * 80)
             logInfo(f"🎨 STARTING LoRA PROCESSING: {lora_name}")
-            logInfo(f"📂 Input folder: {input_folder}")
-            logInfo(f"📂 Output folder: {output_folder}")
+            logInfo(f"📂 Input folder: {input_rel}")
+            logInfo(f"📂 Output folder: {output_rel}")
             logInfo("=" * 80)
             
             # Call main.py with batch processing
@@ -596,7 +647,8 @@ class PipelineRunner:
                 logInfo(f"\n✅ {lora_name} processing complete")
             except subprocess.CalledProcessError as e:
                 logError(f"\n❌ {lora_name} processing failed: {e}")
-                # Continue with next LoRA instead of stopping
+                logError(f"❌ Pipeline stopped due to LoRA processing failure")
+                raise  # Stop pipeline on failure
         
         logInfo(f"✅ LoRA processing complete - {len(loras_to_process)} styles processed")
     
@@ -604,15 +656,20 @@ class PipelineRunner:
         """Stage 7: Apply watermarks to LoRA-processed images"""
         logInfo("💧 Stage 7: Watermarking LoRA-processed images")
         
-        lora_config = self.config.get('lora_processing', {})
-        lora_output = lora_config.get('output_folder', self.paths.get('lora_processed'))
-        watermark_output = self.paths.get('final_albums')
+        # Use resolved paths from self.paths (already processed by resolve_config_placeholders)
+        lora_output = str(Path(self.paths.get('lora_processed')))
+        watermark_output = str(Path(self.paths.get('watermarked_final')))
         if not watermark_output:
             logWarn("⚠️  No final albums directory configured (paths.final_albums)")
             return
         
-        logInfo(f"📁 Input: {lora_output}")
-        logInfo(f"📂 Output: {watermark_output}")
+        # Show relative paths for cleaner output
+        lib_root = self.paths.get('lib_root')
+        input_rel = lora_output.replace(lib_root + '/', '') if lib_root else lora_output
+        output_rel = watermark_output.replace(lib_root + '/', '') if lib_root else watermark_output
+        
+        logInfo(f"📁 Input: {input_rel}")
+        logInfo(f"📂 Output: {output_rel}")
         
         # Call postprocess_lora.py
         import sys
@@ -1022,4 +1079,9 @@ if __name__ == "__main__":
     else:
         logInfo("✅ Proceeding without confirmation (--yes supplied).")
 
-    runner.run_pipeline(args.stages)
+    # Handle comma-separated stages if provided as single argument
+    stages_to_run = args.stages
+    if stages_to_run and len(stages_to_run) == 1 and ',' in stages_to_run[0]:
+        stages_to_run = [s.strip() for s in stages_to_run[0].split(',')]
+
+    runner.run_pipeline(stages_to_run)

@@ -52,36 +52,72 @@ class PostLoRAProcessor:
             original_base = filename_base
         
         if not self.master_store:
+            logWarn(f"⚠️  MasterStore not available for metadata lookup")
             return {}
+        
         # Try direct candidate path in preprocessed folder
-        pre_dir = Path(self.config.get('paths', {}).get('preprocessed'))
-        album_dir = lora_image_path.parent.name
-        candidates = [
-            pre_dir / album_dir / f"{original_base}.webp",
-            pre_dir / album_dir / f"{original_base}.jpg",
-            pre_dir / album_dir / f"{original_base}.jpeg",
-            pre_dir / album_dir / f"{original_base}.png",
-        ]
-        for c in candidates:
-            e = self.master_store.get(str(c))
-            if e and e.get('preprocessing'):
-                return {
-                    'location_formatted': e.get('location_formatted'),
-                    'date_taken_utc': (e.get('exif') or {}).get('date_taken_utc'),
-                    'date_taken': (e.get('exif') or {}).get('date_taken'),
-                    'landmarks': e.get('landmarks')
-                }
-        # Fallback: search raw entries by file_name stem
+        pre_dir_cfg = self.config.get('paths', {}).get('preprocessed')
+        if pre_dir_cfg:
+            pre_dir = Path(pre_dir_cfg)
+            album_dir = lora_image_path.parent.name
+            candidates = [
+                pre_dir / album_dir / f"{original_base}.webp",
+                pre_dir / album_dir / f"{original_base}.jpg",
+                pre_dir / album_dir / f"{original_base}.jpeg",
+                pre_dir / album_dir / f"{original_base}.png",
+            ]
+            for c in candidates:
+                e = self.master_store.get(str(c))
+                if e and 'preprocessing' in e.get('pipeline', {}).get('stages', []):
+                    return {
+                        'location_formatted': e.get('location_formatted'),
+                        'date_taken_utc': (e.get('exif') or {}).get('date_taken_utc'),
+                        'date_taken': (e.get('exif') or {}).get('date_taken'),
+                        'landmarks': e.get('landmarks')
+                    }
+        
+        # Fallback 1: Search raw entries by exact file_name match (without extension)
         base = original_base
+        matches_found = 0
         for fp, e in self.master_store.list_paths().items():
-            if Path(fp).stem == base and 'metadata_extraction' in e.get('pipeline', {}).get('stages', []):
+            fp_path = Path(fp)
+            if fp_path.stem == base:
+                matches_found += 1
+                if 'metadata_extraction' in e.get('pipeline', {}).get('stages', []):
+                    logInfo(f"    ✓ Found metadata via stem match: {fp_path.name}")
+                    return {
+                        'location_formatted': e.get('location_formatted'),
+                        'date_taken_utc': (e.get('exif') or {}).get('date_taken_utc'),
+                        'date_taken': (e.get('exif') or {}).get('date_taken'),
+                        'landmarks': e.get('landmarks')
+                    }
+        
+        if matches_found > 0:
+            logWarn(f"⚠️  Found {matches_found} stem matches for '{base}' but none had metadata_extraction stage")
+        
+        # Fallback 2: Try matching with original album folder structure
+        # LoRA files are in: lora_processed/[Album]/imagename_style_timestamp.webp
+        # Raw files might be in: albums/[Album]/imagename.jpeg
+        album_name = lora_image_path.parent.name
+        album_matches = 0
+        for fp, e in self.master_store.list_paths().items():
+            fp_path = Path(fp)
+            # Check if album name is in path and stem matches
+            if album_name in str(fp_path) and fp_path.stem == base:
+                album_matches += 1
+                logInfo(f"    ✓ Found metadata via album+stem match: {fp_path.name}")
                 return {
                     'location_formatted': e.get('location_formatted'),
                     'date_taken_utc': (e.get('exif') or {}).get('date_taken_utc'),
                     'date_taken': (e.get('exif') or {}).get('date_taken'),
                     'landmarks': e.get('landmarks')
                 }
-        logWarn(f"⚠️  No metadata found for {lora_image_path.name} (base: {original_base})")
+        
+        if album_matches > 0:
+            logWarn(f"⚠️  Found {album_matches} album+stem matches for '{base}' in album '{album_name}' but couldn't extract metadata")
+        
+        logWarn(f"⚠️  No metadata found for {lora_image_path.name} (original_base: '{original_base}', album: '{album_name}')")
+        logWarn(f"     Searched {len(self.master_store.list_paths())} entries in master store")
         return {}
     
     def watermark_lora_output(
@@ -167,6 +203,14 @@ class PostLoRAProcessor:
                 try:
                     # Find metadata for this image
                     metadata = self.find_metadata_for_image(image_file)
+                    
+                    # Debug: show what metadata was found
+                    if metadata:
+                        loc = metadata.get('location_formatted', 'NO LOCATION')
+                        logInfo(f"    📍 Metadata found: {loc}")
+                    else:
+                        logWarn(f"    ⚠️  Empty metadata returned for {image_file.name}")
+                    
                     # Try to infer LoRA style from filename
                     style_name = None
                     parts = image_file.stem.rsplit('_', 2)

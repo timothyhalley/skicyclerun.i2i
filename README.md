@@ -125,6 +125,57 @@ Prefer a zero-dependency check without CLI output? Execute:
 python -c "from utils.cli import load_config; from utils.validator import validate_config; cfg = load_config('config/pipeline_config.json'); validate_config(cfg); print('✅ config ok')"
 ```
 
+### Wikipedia Enrichment Helper
+
+The optional `wikiLocationEnhancement.py` script augments geocode metadata with
+Wikipedia summaries. The REST API does **not** require an API key, but it
+expects every client to send a descriptive `User-Agent` header with contact
+information. Without one, requests are rejected with `403` responses.
+
+1. Copy `env.example` to `.env` and edit the `WIKI_USER_AGENT` value so it
+   references your project and includes a reachable email or URL.
+2. Load the env file in your shell (for example,
+   `export $(grep -v '^#' .env | xargs)` or use your preferred dotenv loader).
+3. Run the helper:
+
+```bash
+python geoScripts/wikiLocationEnhancement.py \
+  --master-store geoScripts/data/geocode_cache.json --verbose
+```
+
+If `WIKI_USER_AGENT` is unset, the script falls back to a generic value, but
+providing your own string is strongly recommended to comply with Wikipedia's
+API policy.
+
+### Google Places Landmark Helper
+
+`geoScripts/googlePlacesEnhancement.py` calls the Google Maps Places Nearby
+Search v1 API to surface high-signal landmarks for each coordinate. The CLI and
+flags mirror the Wikipedia helper so you can drop it into existing workflows.
+
+1. Enable the Places API for your Google Cloud project and create or reuse an
+   API key.
+2. Copy `env.example` to `.env` (if you have not already) and set
+   `GOOGLE_MAPS_API_KEY` to the key value. Load the variables in your shell
+   before executing the helper.
+3. Run the helper with a geocode cache or subset:
+
+```bash
+python geoScripts/googlePlacesEnhancement.py \
+  --master-store geoScripts/data/geocode_cache.json --verbose
+```
+
+Pass `--radius` to widen or tighten the search circle, and `--debug` to review
+payloads without consuming quota. Logs are grouped per entry with separators so
+CLI output stays readable.
+
+**Monitoring usage:** Google Maps Platform does not expose a direct Places API
+endpoint for quota counts. Use Google Cloud's Billing usage reports, budget
+alerts, or the Cloud Billing API (`billingbudgets.googleapis.com`) to keep an
+eye on monthly consumption. The default $200 monthly credit typically covers up
+to ~10K Places calls, but budgets ensure you receive alerts well before any
+unexpected spend.
+
 ### Pipeline Config (`config/pipeline_config.json`)
 
 ```json

@@ -20,7 +20,7 @@ usage() {
     echo "  --debug               Enable debug mode"
     echo ""
     echo "Examples:"
-    echo "  $0 --lora Super_Pencil --input $SKICYCLERUN_LIB_ROOT/images/scaled"
+    echo "  $0 --lora Super_Pencil --input $SKICYCLERUN_LIB_ROOT/pipeline/scaled"
     echo "  $0 --lora Jojo --input ~/Pictures/batch1 --verbose"
     echo ""
     exit 1
