@@ -44,30 +44,18 @@ def logWarn(message):
 # Memory management helper
 # ─────────────────────────────────────────────────────────────
 def cleanup_memory(aggressive=False):
-    """Force cleanup of PyTorch cache and Python garbage collection
-    
-    Args:
-        aggressive: If True, performs multiple garbage collection passes
-    """
+    """Lightweight cleanup - let MPS manage its own memory"""
     try:
         import torch
-        if torch.backends.mps.is_available():
-            torch.mps.empty_cache()
-            # Force synchronization to ensure cleanup completes
-            torch.mps.synchronize()
-        elif torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            torch.cuda.synchronize()
+        # Just do basic garbage collection, let MPS handle its own memory
+        gc.collect()
         
-        # Multiple GC passes for aggressive cleanup
+        # Only empty cache if explicitly requested (aggressive mode)
         if aggressive:
-            for _ in range(3):
-                gc.collect()
-        else:
-            gc.collect()
-            
-        if hasattr(torch, '_C') and hasattr(torch._C, '_cuda_clearCublasWorkspaces'):
-            torch._C._cuda_clearCublasWorkspaces()
+            if torch.backends.mps.is_available():
+                torch.mps.empty_cache()
+            elif torch.cuda.is_available():
+                torch.cuda.empty_cache()
     except Exception as e:
         logDebug(f"Memory cleanup warning: {e}")
 
@@ -839,17 +827,8 @@ def main():
                 logError("❌ Processing terminated due to error")
                 sys.exit(1)
         
-        # Clean up memory after each image to prevent accumulation
-        # Use aggressive cleanup every 10 images to prevent memory buildup
-        if total_files > 1 and i % 10 == 0:
-            cleanup_memory(aggressive=True)
-            if args.debug:
-                logDebug(f"Aggressive memory cleanup performed at image {i}/{total_files}")
-        else:
-            cleanup_memory()
-            
-        if args.debug and len(image_paths) > 1:
-            report_memory_usage()
+        # Minimal cleanup - just garbage collection  
+        gc.collect()
     
     # Print batch summary if multiple files
     if total_files > 1:

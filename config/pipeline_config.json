@@ -116,11 +116,18 @@
     "batch_mode": true,
     "preserve_metadata": true,
     "loras_to_process": [
+      "PencilDrawing",
+      "FractalGeometry",
       "Afremov",
       "Gorillaz",
-      "Origami",
+      "Origami"
+    ],
+    "_Available_loras": [
       "PencilDrawing",
-      "FractalGeometry"
+      "FractalGeometry",
+      "Afremov",
+      "Gorillaz",
+      "Origami"
     ],
     "input_folder": "{preprocessed}",
     "output_folder": "{lora_processed}",

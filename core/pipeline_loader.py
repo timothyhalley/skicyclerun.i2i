@@ -31,11 +31,10 @@ def load_pipeline(model_name, device, precision, config):
     logInfo(f"🚚 Loading pipeline with {dtype}...")
     pipeline = FluxKontextPipeline.from_pretrained(
         model_name,
-        dtype=dtype,
         cache_dir=cache_dir
     )
     
     logInfo(f"✅ Pipeline loaded, moving to {device}...")
-    pipeline = pipeline.to(device)
+    pipeline = pipeline.to(device, dtype=dtype)
     
     return pipeline
