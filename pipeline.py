@@ -625,6 +625,25 @@ class PipelineRunner:
         import subprocess
         
         for lora_name in loras_to_process:
+            # Check for stop file before starting each LoRA
+            stop_file = "/tmp/skicyclerun_stop"
+            if os.path.exists(stop_file):
+                from datetime import datetime
+                stop_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                logInfo("\n" + "=" * 80)
+                logInfo(f"🛑 STOP FILE DETECTED: {stop_file}")
+                logInfo(f"⏰ Stop requested at: {stop_time}")
+                logInfo(f"📊 Progress: Completed processing for previous LoRAs")
+                logInfo("✅ Gracefully shutting down pipeline")
+                logInfo("=" * 80)
+                try:
+                    os.remove(stop_file)
+                    logInfo(f"🗑️  Stop file removed: {stop_file}")
+                except Exception as e:
+                    logWarn(f"⚠️  Could not remove stop file {stop_file}: {e}")
+                logInfo(f"👋 Pipeline stopped at {stop_time}")
+                return  # Exit the LoRA processing stage
+            
             logInfo("=" * 80)
             logInfo(f"🎨 STARTING LoRA PROCESSING: {lora_name}")
             logInfo(f"📂 Input folder: {input_rel}")
@@ -1000,7 +1019,11 @@ class PipelineRunner:
                 icon = '⚠️' if optional else '❌'
                 note = 'not present' + (' (optional)' if optional else '')
 
+            # Display path relative to lib_root if possible, otherwise show full path
             target_display = target if target else '<unset>'
+            if target and lib_root and target.startswith(lib_root):
+                target_display = target[len(lib_root):].lstrip('/')
+            
             logInfo(f"        {icon} {label}: {target_display} ({note})")
 
         if has_errors:

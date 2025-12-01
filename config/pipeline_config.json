@@ -96,7 +96,7 @@
     "landmark_max_distance_m": 300,
     "landmark_format": " — {name}",
     "font": {
-      "family": "Courier New Bold",
+      "path": "fonts/asimovian/Asimovian.ttf",
       "size": 36,
       "min_size": 20,
       "max_width_percent": 60,

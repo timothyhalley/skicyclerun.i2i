@@ -32,7 +32,21 @@ class WatermarkApplicator:
     
     def _get_font(self, font_size: int):
         """Load a font of a specific size using fallback chain."""
-        # Try multiple font options in order of preference
+        # First, check if custom font path is specified in config
+        custom_font_path = self.font_config.get('path')
+        if custom_font_path:
+            # Support both absolute and relative paths
+            if not Path(custom_font_path).is_absolute():
+                # Relative to project root
+                custom_font_path = Path(__file__).parent.parent / custom_font_path
+            try:
+                font = ImageFont.truetype(str(custom_font_path), font_size)
+                return font
+            except Exception as e:
+                print(f"[WatermarkApplicator] Failed to load custom font {custom_font_path}: {e}", file=sys.stderr)
+                print(f"[WatermarkApplicator] Falling back to system fonts", file=sys.stderr)
+        
+        # Try multiple system font options in order of preference
         font_paths = [
             "/System/Library/Fonts/Courier New Bold.ttf",
             "/System/Library/Fonts/Supplemental/Courier New Bold.ttf",

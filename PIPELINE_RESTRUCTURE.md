@@ -6,7 +6,7 @@ The pipeline has been restructured to use a clear numbered-stage directory layou
 
 ## New Directory Structure
 
-```
+```plaintext
 $SKICYCLERUN_LIB_ROOT/
 └── pipeline/
     ├── archive/              # Stage 0: Archived work

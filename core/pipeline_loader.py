@@ -31,7 +31,7 @@ def load_pipeline(model_name, device, precision, config):
     logInfo(f"🚚 Loading pipeline with {dtype}...")
     pipeline = FluxKontextPipeline.from_pretrained(
         model_name,
-        torch_dtype=dtype,
+        dtype=dtype,
         cache_dir=cache_dir
     )
     

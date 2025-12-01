@@ -89,7 +89,7 @@ def resolve_config_placeholders(config: Dict[str, Any]) -> Dict[str, Any]:
     if metadata_root:
         paths["metadata_root"] = metadata_root
 
-    # First pass: resolve lib_root and basic variables
+    # Multi-pass resolution: iterate until no more placeholders can be resolved
     variables = {
         "lib_root": lib_root,
         "images_root": images_root,
@@ -98,16 +98,26 @@ def resolve_config_placeholders(config: Dict[str, Any]) -> Dict[str, Any]:
         "models_root": huggingface_cache,  # legacy placeholder support
     }
     
-    partially_resolved = _expand_obj(config, variables)
+    current = _expand_obj(config, variables)
     
-    # Second pass: resolve nested placeholders (pipeline_base depends on lib_root, metadata_dir depends on pipeline_base, etc.)
-    # Extract any newly resolved paths from the paths section to use as additional variables
-    resolved_paths = partially_resolved.get("paths", {})
-    extended_variables = dict(variables)
-    extended_variables.update({k: v for k, v in resolved_paths.items() if isinstance(v, str)})
+    # Keep resolving until we reach a fixed point (no more changes)
+    # Maximum 5 passes to handle deeply nested placeholders
+    for pass_num in range(5):
+        # Extract resolved paths and add them to variables
+        resolved_paths = current.get("paths", {})
+        extended_variables = dict(variables)
+        extended_variables.update({k: v for k, v in resolved_paths.items() if isinstance(v, str)})
+        
+        # Try another resolution pass
+        next_resolved = _expand_obj(current, extended_variables)
+        
+        # If nothing changed, we're done
+        if next_resolved == current:
+            break
+            
+        current = next_resolved
     
-    # Final resolution with all variables
-    return _expand_obj(partially_resolved, extended_variables)
+    return current
 
 
 def expand_with_paths(value: Any, paths: Dict[str, str] | None = None) -> Any:

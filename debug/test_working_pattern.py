@@ -18,7 +18,7 @@ hf_cache = cfg.get("paths",{}).get("huggingface_cache") or os.path.normpath(os.p
 
 pipeline = FluxKontextPipeline.from_pretrained(
     "black-forest-labs/FLUX.1-Kontext-dev", 
-    torch_dtype=torch.bfloat16,
+    dtype=torch.bfloat16,
     cache_dir=hf_cache
 ).to('mps')
 

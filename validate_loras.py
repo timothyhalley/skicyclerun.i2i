@@ -265,7 +265,7 @@ class LoRAValidator:
                 self.log("Loading FLUX.1-Kontext-dev pipeline...")
                 pipeline = FluxKontextPipeline.from_pretrained(
                     "black-forest-labs/FLUX.1-Kontext-dev",
-                    torch_dtype=torch.bfloat16
+                    dtype=torch.bfloat16
                 )
                 self.log(f"{GREEN}✅ Pipeline loaded{RESET}")
             except Exception as e:
