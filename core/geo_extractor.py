@@ -142,7 +142,7 @@ class GeoExtractor:
         return dirs[idx]
     
     def reverse_geocode(self, lat: float, lon: float) -> Optional[Dict]:
-        """Convert coordinates to location using OpenStreetMap Nominatim"""
+        """Convert coordinates to location using Photon (primary) with Google Maps fallback"""
         # Check cache first
         cache_key = f"{lat:.6f},{lon:.6f}"
         if cache_key in self.cache:
@@ -157,6 +157,125 @@ class GeoExtractor:
         if elapsed < self.rate_limit:
             time.sleep(self.rate_limit - elapsed)
         
+        # Try Photon first (free, better POI accuracy)
+        location_info = self._photon_geocode(lat, lon)
+        
+        # Fallback to Google Maps if Photon fails and API key available
+        if not location_info:
+            google_key = self.geocoding_config.get('google_api_key')
+            if google_key:
+                location_info = self._google_maps_geocode(lat, lon, google_key)
+        
+        # Final fallback to Nominatim (original provider)
+        if not location_info:
+            location_info = self._nominatim_geocode(lat, lon)
+        
+        # Cache the result if we got one
+        if location_info:
+            self.cache[cache_key] = location_info
+            self._save_cache()
+        
+        return location_info
+    
+    def _photon_geocode(self, lat: float, lon: float) -> Optional[Dict]:
+        """Photon by Komoot - Free OSM-based geocoding with good POI accuracy"""
+        try:
+            # First try reverse with multiple results to find POIs
+            url = "https://photon.komoot.io/reverse"
+            params = {
+                'lat': lat,
+                'lon': lon,
+                'limit': 10,
+                'radius': 0.05  # 50m
+            }
+            
+            response = requests.get(url, params=params, timeout=10)
+            self.last_request_time = time.time()
+            
+            if response.status_code == 200:
+                data = response.json()
+                features = data.get('features', [])
+                
+                if features:
+                    # Low-quality POI types to reject (generic chains, mundane businesses)
+                    low_quality_types = {
+                        'convenience', 'supermarket', 'fast_food', 'fuel', 'atm', 
+                        'bank', 'pharmacy', 'post_office', 'car_rental', 'parking',
+                        'clothes', 'shoes', 'hairdresser', 'laundry', 'car_wash'
+                    }
+                    
+                    # Generic chain names to reject
+                    chain_keywords = {
+                        '7-eleven', 'seven eleven', 'starbucks', 'mcdonalds', "mcdonald's",
+                        'subway', 'tim hortons', 'circle k', 'shell', 'chevron', 'esso',
+                        'walmart', 'target', 'costco', 'safeway', 'shoppers drug mart',
+                        'cvs', 'walgreens', 'atm', 'parking', 'gas station'
+                    }
+                    
+                    # Look for high-quality POIs (tourism, landmarks, restaurants, parks)
+                    for feature in features:
+                        props = feature.get('properties', {})
+                        osm_key = props.get('osm_key', '')
+                        osm_value = props.get('osm_value', '')
+                        name = props.get('name', '')
+                        
+                        if not name:
+                            continue
+                        
+                        # Skip low-quality POI types
+                        if osm_value in low_quality_types:
+                            continue
+                        
+                        # Skip generic chain stores
+                        name_lower = name.lower()
+                        if any(chain in name_lower for chain in chain_keywords):
+                            continue
+                        
+                        # Accept high-quality POIs
+                        if osm_key in ['tourism', 'leisure']:
+                            # Tourism and leisure are always good
+                            return self._photon_feature_to_location(feature, lat, lon, poi_found=True)
+                        
+                        if osm_key == 'amenity' and osm_value not in low_quality_types:
+                            # Good amenities (restaurants, cafes, museums, theaters, etc.)
+                            return self._photon_feature_to_location(feature, lat, lon, poi_found=True)
+                        
+                        if osm_key == 'shop' and osm_value not in low_quality_types:
+                            # Named shops that aren't generic (boutiques, galleries, etc.)
+                            return self._photon_feature_to_location(feature, lat, lon, poi_found=True)
+                    
+                    # No quality POI found, use first result without POI flag
+                    return self._photon_feature_to_location(features[0], lat, lon, poi_found=False)
+        
+        except Exception as e:
+            print(f"Photon geocoding error ({lat}, {lon}): {e}")
+        
+        return None
+    
+    def _photon_feature_to_location(self, feature: Dict, lat: float, lon: float, poi_found: bool = False) -> Dict:
+        """Convert Photon feature to standard location format"""
+        props = feature.get('properties', {})
+        
+        return {
+            'city': props.get('city') or props.get('town') or props.get('village'),
+            'state': props.get('state'),
+            'country': props.get('country'),
+            'country_code': props.get('countrycode', '').upper() if props.get('countrycode') else None,
+            'display_name': props.get('name', '') or f"{props.get('street', '')}, {props.get('city', '')}",
+            'name': props.get('name'),  # POI name if available
+            'lat': lat,
+            'lon': lon,
+            'osm_type': props.get('osm_type'),
+            'osm_id': props.get('osm_id'),
+            'type': props.get('osm_value') or props.get('type'),
+            'poi_found': poi_found,
+            'provider': 'photon',
+            'namedetails': {},
+            'extratags': {}
+        }
+    
+    def _nominatim_geocode(self, lat: float, lon: float) -> Optional[Dict]:
+        """OpenStreetMap Nominatim - Fallback provider"""
         try:
             url = self.geocoding_config.get('api_url', 'https://nominatim.openstreetmap.org/reverse')
             params = {
@@ -180,7 +299,8 @@ class GeoExtractor:
                 address = data.get('address', {})
                 namedetails = data.get('namedetails') or {}
                 extratags = data.get('extratags') or {}
-                location_info = {
+                
+                return {
                     'city': address.get('city') or address.get('town') or address.get('village') or address.get('hamlet') or address.get('suburb'),
                     'state': address.get('state'),
                     'country': address.get('country'),
@@ -192,20 +312,102 @@ class GeoExtractor:
                     'osm_id': data.get('osm_id'),
                     'category': data.get('category'),
                     'type': data.get('type'),
+                    'provider': 'nominatim',
                     'namedetails': namedetails,
                     'extratags': {k: extratags.get(k) for k in ['wikidata','wikipedia','brand','operator'] if k in extratags}
                 }
-                
-                # Cache the result
-                self.cache[cache_key] = location_info
-                self._save_cache()
-                
-                return location_info
             else:
-                print(f"Geocoding API error: {response.status_code}")
+                print(f"Nominatim API error: {response.status_code}")
                 
         except Exception as e:
-            print(f"Error reverse geocoding ({lat}, {lon}): {e}")
+            print(f"Error reverse geocoding with Nominatim ({lat}, {lon}): {e}")
+        
+        return None
+    
+    def _google_maps_geocode(self, lat: float, lon: float, api_key: str) -> Optional[Dict]:
+        """Google Maps - Premium fallback for commercial locations"""
+        try:
+            # Try Places API first for POI detection
+            places_url = "https://maps.googleapis.com/maps/api/place/nearbysearch/json"
+            
+            for radius in [20, 50, 100]:
+                places_params = {
+                    'location': f"{lat},{lon}",
+                    'radius': radius,
+                    'key': api_key
+                }
+                
+                places_response = requests.get(places_url, params=places_params, timeout=10)
+                if places_response.status_code == 200:
+                    places_data = places_response.json()
+                    
+                    if places_data.get('status') == 'OK' and places_data.get('results'):
+                        # Filter out administrative areas
+                        excluded_types = {'locality', 'political', 'administrative_area_level_1', 
+                                        'administrative_area_level_2', 'administrative_area_level_3',
+                                        'country', 'postal_code', 'neighborhood'}
+                        
+                        for poi in places_data['results']:
+                            poi_types = set(poi.get('types', []))
+                            if not poi_types.issubset(excluded_types) and poi_types - excluded_types:
+                                # Found actual business/POI
+                                address_components = {}
+                                for comp in poi.get('address_components', []):
+                                    comp_type = comp['types'][0] if comp.get('types') else None
+                                    if comp_type:
+                                        address_components[comp_type] = comp.get('long_name')
+                                
+                                return {
+                                    'city': address_components.get('locality'),
+                                    'state': address_components.get('administrative_area_level_1'),
+                                    'country': address_components.get('country'),
+                                    'country_code': address_components.get('country', '').upper()[:2],
+                                    'display_name': poi.get('vicinity', ''),
+                                    'name': poi.get('name'),
+                                    'lat': lat,
+                                    'lon': lon,
+                                    'type': poi.get('types', [None])[0],
+                                    'poi_found': True,
+                                    'provider': 'google',
+                                    'namedetails': {},
+                                    'extratags': {}
+                                }
+                        break
+            
+            # Fallback to regular geocoding
+            geocode_url = "https://maps.googleapis.com/maps/api/geocode/json"
+            params = {
+                'latlng': f"{lat},{lon}",
+                'key': api_key
+            }
+            
+            response = requests.get(geocode_url, params=params, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                if data.get('status') == 'OK' and data.get('results'):
+                    result = data['results'][0]
+                    address_components = {}
+                    for comp in result.get('address_components', []):
+                        comp_type = comp['types'][0] if comp.get('types') else None
+                        if comp_type:
+                            address_components[comp_type] = comp.get('long_name')
+                    
+                    return {
+                        'city': address_components.get('locality'),
+                        'state': address_components.get('administrative_area_level_1'),
+                        'country': address_components.get('country'),
+                        'country_code': address_components.get('country', '').upper()[:2],
+                        'display_name': result.get('formatted_address', ''),
+                        'lat': lat,
+                        'lon': lon,
+                        'type': result.get('types', [None])[0],
+                        'provider': 'google',
+                        'namedetails': {},
+                        'extratags': {}
+                    }
+        
+        except Exception as e:
+            print(f"Google Maps geocoding error ({lat}, {lon}): {e}")
         
         return None
 
@@ -331,22 +533,96 @@ out body {self.poi_max_results};
         'Saskatchewan': 'SK', 'Yukon': 'YT'
     }
 
-    def format_location(self, location_info: Optional[Dict]) -> str:
-        """Format location info into a short, readable string
+    def format_display_name_english(self, location_info: Optional[Dict]) -> str:
+        """Format location using English names from namedetails when available.
         
-        Rules:
-        - North America (USA/Canada): Use state/province abbreviations, omit country
-          Example: "Denver, CO" not "Denver, Colorado, United States"
-        - Other countries: Include full location with country
-          Example: "Tokyo, Japan"
+        Extracts readable location from display_name, using English translations
+        from namedetails.name:en when available for non-Latin scripts.
+        
+        Returns format like: "Hikagesawa Forest Road, Hachiōji, Tokyo, Japan"
         """
         if not location_info:
             return "Unknown Location"
         
-        city = location_info.get('city')
-        state = location_info.get('state')
-        country = location_info.get('country')
+        display_name = location_info.get('display_name', '')
+        if not display_name:
+            return self.format_location(location_info)  # Fallback to short format
+        
+        # Parse display_name components (comma-separated)
+        parts = [p.strip() for p in display_name.split(',')]
+        
+        # Get English name if available
+        namedetails = location_info.get('namedetails', {})
+        english_name = namedetails.get('name:en')
+        
+        # If we have English name, replace first part (often the street/landmark name)
+        if english_name and len(parts) > 0:
+            parts[0] = english_name
+        
+        # For Japan specifically, translate common terms
         country_code = location_info.get('country_code', '').upper()
+        if country_code == 'JP':
+            # Replace Japanese administrative divisions with English
+            translated_parts = []
+            for part in parts:
+                # Keep first part (already English if available)
+                if part == parts[0] and english_name:
+                    translated_parts.append(part)
+                    continue
+                # Keep numeric parts (postal codes)
+                if part.replace('-', '').isdigit():
+                    translated_parts.append(part)
+                    continue
+                # Try to extract English from mixed scripts or keep if already Latin
+                if any(ord(c) < 128 for c in part):  # Has Latin characters
+                    translated_parts.append(part)
+                else:
+                    # Skip purely Kanji parts, we'll use city/state from address
+                    continue
+            
+            # Rebuild with address components for missing translations
+            address = location_info.get('address', {}) if 'address' in location_info else location_info
+            city = address.get('city') or address.get('town') or address.get('village')
+            state = address.get('state')
+            country = address.get('country')
+            
+            # Build clean English-friendly location
+            result_parts = []
+            if translated_parts:
+                result_parts.extend(translated_parts[:2])  # Street name + maybe one more
+            if city and city not in result_parts:
+                result_parts.append(city)
+            if country:
+                result_parts.append(country)
+            
+            return ', '.join(result_parts) if result_parts else "Unknown Location"
+        
+        # For other countries, return first 3-4 meaningful parts
+        meaningful_parts = [p for p in parts[:4] if p and not p.replace('-', '').isdigit()]
+        return ', '.join(meaningful_parts) if meaningful_parts else self.format_location(location_info)
+    
+    def format_location(self, location_info: Optional[Dict]) -> str:
+        """Format location info into a short, readable string with neighborhood detail
+        
+        Rules:
+        - North America (USA/Canada): Use state/province abbreviations, omit country
+          Example: "Denver, CO" not "Denver, Colorado, United States"
+        - Other countries with neighborhoods: Show neighborhood detail
+          Example: "Shibuya, Tokyo" not just "Tokyo, Japan"
+        - Fallback: city, country
+        """
+        if not location_info:
+            return "Unknown Location"
+        
+        # Extract all available location components
+        address = location_info.get('address', {}) if 'address' in location_info else location_info
+        
+        # Get location hierarchy (from specific to general)
+        neighbourhood = address.get('neighbourhood') or address.get('suburb') or address.get('quarter')
+        city = location_info.get('city') or address.get('city') or address.get('town') or address.get('village')
+        state = location_info.get('state') or address.get('state')
+        country = location_info.get('country') or address.get('country')
+        country_code = (location_info.get('country_code') or address.get('country_code') or '').upper()
         
         # Check if this is North America (USA or Canada)
         is_north_america = country_code in ['US', 'CA']
@@ -354,8 +630,10 @@ out body {self.poi_max_results};
         if is_north_america:
             # North America: Use abbreviations, omit country
             if city and state:
-                # Abbreviate state/province if possible
                 state_abbrev = self.STATE_ABBREVIATIONS.get(state, state)
+                # Add neighborhood if available and different from city
+                if neighbourhood and neighbourhood != city:
+                    return f"{neighbourhood}, {city}, {state_abbrev}"
                 return f"{city}, {state_abbrev}"
             elif city:
                 return city
@@ -365,8 +643,11 @@ out body {self.poi_max_results};
             else:
                 return "Unknown Location"
         else:
-            # Other countries: Include country name
-            if city and country:
+            # Other countries: Show neighborhood detail when available
+            if neighbourhood and city and neighbourhood != city:
+                # Show neighborhood + city for detail (e.g., "Shibuya, Tokyo")
+                return f"{neighbourhood}, {city}"
+            elif city and country:
                 return f"{city}, {country}"
             elif city:
                 return city
@@ -374,6 +655,126 @@ out body {self.poi_max_results};
                 return country
             else:
                 return "Unknown Location"
+    
+    def extract_comprehensive_exif(self, image_path: str) -> Dict:
+        """
+        Extract comprehensive EXIF metadata from image
+        Returns dictionary with all available EXIF fields
+        """
+        exif_dict = {}
+        
+        try:
+            image = Image.open(image_path)
+            exif_data = image._getexif()
+            
+            if not exif_data:
+                return exif_dict
+            
+            # Fields to extract (mapped to standard keys)
+            target_fields = {
+                'DateTime': 'date_time',
+                'DateTimeOriginal': 'date_time_original',
+                'DateTimeDigitized': 'date_time_digitized',
+                'Make': 'camera_make',
+                'Model': 'camera_model',
+                'LensMake': 'lens_make',
+                'LensModel': 'lens_model',
+                'PixelXDimension': 'pixel_x_dimension',
+                'PixelYDimension': 'pixel_y_dimension',
+                'Orientation': 'orientation',
+                'XResolution': 'x_resolution',
+                'YResolution': 'y_resolution',
+                'ResolutionUnit': 'resolution_unit',
+                'Software': 'software',
+                'ExposureTime': 'exposure_time',
+                'FNumber': 'f_number',
+                'ISO': 'iso',
+                'ISOSpeedRatings': 'iso_speed_ratings',
+                'FocalLength': 'focal_length',
+                'FocalLengthIn35mmFilm': 'focal_length_35mm',
+                'WhiteBalance': 'white_balance',
+                'Flash': 'flash',
+                'ExposureProgram': 'exposure_program',
+                'MeteringMode': 'metering_mode',
+                'ColorSpace': 'color_space',
+                'DigitalZoomRatio': 'digital_zoom_ratio',
+                'SceneCaptureType': 'scene_capture_type',
+                'SubjectDistanceRange': 'subject_distance_range'
+            }
+            
+            # Extract standard EXIF fields
+            for tag, value in exif_data.items():
+                decoded = TAGS.get(tag, tag)
+                
+                if decoded in target_fields:
+                    key = target_fields[decoded]
+                    
+                    # Convert values to JSON-serializable format
+                    if isinstance(value, bytes):
+                        try:
+                            value = value.decode('utf-8', errors='ignore').strip('\x00')
+                        except:
+                            continue  # Skip non-serializable bytes
+                    elif isinstance(value, dict):
+                        continue  # Skip IFD objects (nested dicts)
+                    elif hasattr(value, 'numerator') and hasattr(value, 'denominator'):
+                        # Handle IFDRational objects
+                        try:
+                            value = float(value.numerator) / float(value.denominator) if value.denominator != 0 else float(value.numerator)
+                        except:
+                            continue
+                    elif hasattr(value, '__iter__') and not isinstance(value, str):
+                        # Handle tuples/rationals (e.g., exposure time)
+                        try:
+                            if len(value) == 2:
+                                # Rational number
+                                value = float(value[0]) / float(value[1]) if value[1] != 0 else value[0]
+                        except:
+                            continue  # Skip non-serializable iterables
+                    
+                    exif_dict[key] = value
+                
+                # Extract GPS Info block
+                elif decoded == "GPSInfo":
+                    gps_info = {}
+                    for gps_tag in value:
+                        sub_decoded = GPSTAGS.get(gps_tag, gps_tag)
+                        gps_val = value[gps_tag]
+                        # Convert bytes in GPS fields
+                        if isinstance(gps_val, bytes):
+                            try:
+                                gps_val = gps_val.decode('utf-8', errors='ignore').strip('\x00')
+                            except:
+                                continue
+                        gps_info[sub_decoded] = gps_val
+                    
+                    # Extract specific GPS fields
+                    exif_dict['gps_img_direction'] = self._convert_rational(gps_info.get('GPSImgDirection'))
+                    exif_dict['gps_img_direction_ref'] = gps_info.get('GPSImgDirectionRef')
+                    exif_dict['gps_altitude'] = self._convert_rational(gps_info.get('GPSAltitude'))
+                    exif_dict['gps_altitude_ref'] = gps_info.get('GPSAltitudeRef')
+                    exif_dict['gps_speed'] = self._convert_rational(gps_info.get('GPSSpeed'))
+                    exif_dict['gps_speed_ref'] = gps_info.get('GPSSpeedRef')
+            
+            # Parse date/time fields to ISO format for consistency
+            for date_field in ['date_time', 'date_time_original', 'date_time_digitized']:
+                if date_field in exif_dict:
+                    try:
+                        dt = datetime.strptime(exif_dict[date_field], "%Y:%m:%d %H:%M:%S")
+                        exif_dict[date_field] = dt.isoformat()
+                    except:
+                        # Keep original if parsing fails
+                        pass
+            
+            # Add image dimensions from PIL if not in EXIF
+            if 'pixel_x_dimension' not in exif_dict or 'pixel_y_dimension' not in exif_dict:
+                exif_dict['pixel_x_dimension'] = image.width
+                exif_dict['pixel_y_dimension'] = image.height
+            
+        except Exception as e:
+            print(f"Warning: Could not extract comprehensive EXIF from {image_path}: {e}")
+        
+        return exif_dict
     
     def extract_metadata(self, image_path: str) -> Dict:
         """Extract all metadata from image"""
@@ -386,63 +787,43 @@ out body {self.poi_max_results};
             'gps_coordinates': None,
             'location': None,
             'location_formatted': "Unknown Location",
-            'heading': None
+            'heading': None,
+            'exif': {}
         }
         
-        # Extract date taken and GPS from EXIF
-        try:
-            image = Image.open(image_path)
-            exif_data = image._getexif()
-            
-            if exif_data:
-                # Extract DateTimeOriginal (when photo was taken)
-                for tag, value in exif_data.items():
-                    decoded = TAGS.get(tag, tag)
-                    if decoded == "DateTimeOriginal":
-                        try:
-                            # Format: "2023:01:15 14:30:45"
-                            dt = datetime.strptime(value, "%Y:%m:%d %H:%M:%S")
-                            metadata['date_taken'] = dt.isoformat()
-                        except:
-                            pass
-                        break
-        except Exception as e:
-            print(f"Warning: Could not extract EXIF date from {image_path}: {e}")
+        # Extract comprehensive EXIF data
+        metadata['exif'] = self.extract_comprehensive_exif(image_path)
         
-        # Extract GPS coordinates
+        # Extract primary date_taken from EXIF (prefer DateTimeOriginal)
+        if 'date_time_original' in metadata['exif']:
+            metadata['date_taken'] = metadata['exif']['date_time_original']
+        elif 'date_time_digitized' in metadata['exif']:
+            metadata['date_taken'] = metadata['exif']['date_time_digitized']
+        elif 'date_time' in metadata['exif']:
+            metadata['date_taken'] = metadata['exif']['date_time']
+        
+        # Extract GPS coordinates and heading from comprehensive EXIF
         coords = self.extract_gps_from_exif(image_path)
+        
+        # Extract heading if available in EXIF
+        if 'gps_img_direction' in metadata['exif'] and metadata['exif']['gps_img_direction'] is not None:
+            metadata['heading'] = {
+                'degrees': metadata['exif']['gps_img_direction'],
+                'cardinal': self._degrees_to_compass(metadata['exif']['gps_img_direction']),
+                'ref': metadata['exif'].get('gps_img_direction_ref')
+            }
+        
         if coords:
             lat, lon = coords
             metadata['gps_coordinates'] = {'lat': lat, 'lon': lon}
-            # Extract heading/bearing first (for POI relevance)
-            heading_info = None
-            try:
-                image = Image.open(image_path)
-                exif_data = image._getexif()
-                if exif_data:
-                    gps_info = {}
-                    for tag, value in exif_data.items():
-                        decoded = TAGS.get(tag, tag)
-                        if decoded == "GPSInfo":
-                            for gps_tag in value:
-                                sub_decoded = GPSTAGS.get(gps_tag, gps_tag)
-                                gps_info[sub_decoded] = value[gps_tag]
-                    if gps_info:
-                        heading = self._convert_rational(gps_info.get('GPSImgDirection'))
-                        if heading is not None:
-                            heading_info = {
-                                'degrees': heading,
-                                'cardinal': self._degrees_to_compass(heading),
-                                'ref': gps_info.get('GPSImgDirectionRef')
-                            }
-            except Exception:
-                heading_info = None
-
+            
             # If we have a local date and GPS, infer UTC capture time
             if metadata.get('date_taken'):
                 inferred = infer_utc_from_local_naive(metadata['date_taken'], lat, lon)
                 if inferred:
                     metadata['date_taken_utc'] = inferred
+                    # Also store in exif dict for consistency
+                    metadata['exif']['date_taken_utc'] = inferred
 
             # Reverse geocode to get location
             location_info = self.reverse_geocode(lat, lon)
@@ -450,11 +831,9 @@ out body {self.poi_max_results};
                 metadata['location'] = location_info
                 metadata['location_formatted'] = self.format_location(location_info)
                 # Optional POI enrichment (respect heading for relevance)
-                pois = self.fetch_pois(lat, lon, heading_deg=(heading_info or {}).get('degrees'))
+                heading_deg = metadata.get('heading', {}).get('degrees') if metadata.get('heading') else None
+                pois = self.fetch_pois(lat, lon, heading_deg=heading_deg)
                 if pois:
                     metadata['landmarks'] = pois
-            # Persist heading info if we found it
-            if heading_info:
-                metadata['heading'] = heading_info
         
         return metadata

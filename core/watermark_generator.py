@@ -6,13 +6,15 @@ from datetime import datetime
 from typing import Dict, Optional
 
 class WatermarkGenerator:
-    # Brand symbol - mountain peak (universally supported Unicode)
-    BRAND_SYMBOL = '▲'  # Simple, clean, always renders correctly
+    # Default brand symbol - mountain peak (universally supported Unicode)
+    DEFAULT_SYMBOL = '▲'
     
     def __init__(self, config: Dict):
         self.config = config
         self.watermark_config = config.get('watermark', {})
-        self.format_template = self.watermark_config.get('format', 'SkiCycleRun © {year} {astro_symbol} {location}')
+        self.format_template = self.watermark_config.get('format', 'SkiCycleRun © {year} {symbol} {location}')
+        self.symbol = self.watermark_config.get('symbol', self.DEFAULT_SYMBOL)  # Configurable symbol
+        self.fixed_year = self.watermark_config.get('fixed_year')  # If set, overrides date calculation
         self.year_offset = self.watermark_config.get('year_offset', 1)
         # Landmark inclusion
         self.include_landmark = bool(self.watermark_config.get('include_landmark', False))
@@ -20,26 +22,25 @@ class WatermarkGenerator:
         self.landmark_max_distance_m = int(self.watermark_config.get('landmark_max_distance_m', 300))
         self.landmark_format = self.watermark_config.get('landmark_format', ' — {name}')
     
-    def get_brand_symbol(self) -> str:
-        """Get brand symbol (ski/cycle/run icons)"""
-        return self.BRAND_SYMBOL
-    
     def generate_watermark(self, location: str, date: Optional[datetime] = None, landmark: Optional[str] = None) -> str:
         """Generate watermark text"""
-        if date is None:
-            date = datetime.now()
-        
-        year = date.year + self.year_offset
-        brand_symbol = self.get_brand_symbol()
+        # Use fixed year if configured, otherwise calculate from date
+        if self.fixed_year:
+            year = self.fixed_year
+        else:
+            if date is None:
+                date = datetime.now()
+            year = date.year + self.year_offset
         
         # If no location, just use copyright and symbol
         if not location or location == 'Unknown Location' or location.strip() == '':
-            watermark = f"SkiCycleRun © {year} {brand_symbol}"
+            watermark = f"SkiCycleRun © {year} {self.symbol}"
         else:
-            # Use brand symbol in place of astro_symbol
+            # Format using template - support both old 'astro_symbol' and new 'symbol' placeholders
             watermark = self.format_template.format(
                 year=year,
-                astro_symbol=brand_symbol,  # Keep template variable name for compatibility
+                symbol=self.symbol,
+                astro_symbol=self.symbol,  # Backward compatibility
                 location=location
             )
         # Optionally append landmark

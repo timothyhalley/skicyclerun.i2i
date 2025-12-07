@@ -125,10 +125,10 @@ python test_working_pattern.py
 
 This uses the EXACT pattern from your working code and should produce a colored Ghibli image.
 
-Then test main.py:
+Then test the LoRA transformer:
 
 ```bash
-python main.py
+python core/lora_transformer.py
 ```
 
 ## Key Takeaways

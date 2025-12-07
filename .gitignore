@@ -89,3 +89,5 @@ debug_*.png
 
 # Data files
 geoScripts/data/
+# Dead code archive - excluded from version control
+.deadcode/

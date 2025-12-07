@@ -121,7 +121,7 @@ for LORA in "${LORAS[@]}"; do
     LORA_START=$(date +%s)
     
     # Build command with appropriate arguments
-    CMD="python main.py --lora \"$LORA\""
+    CMD="python core/lora_transformer.py --lora \"$LORA\""
     
     if [ -n "$INPUT_FILE" ]; then
         # Single file mode

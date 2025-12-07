@@ -69,7 +69,53 @@ class MasterStore:
             stages.append(stage)
         entry.setdefault("pipeline", {}).setdefault("timestamps", {})[stage] = utc_now_iso_z()
 
-    def update_entry(self, file_path: str, patch: Dict[str, Any], stage: Optional[str] = None, save: Optional[bool] = None) -> Dict[str, Any]:
+    def update_entry(self, file_path: str, patch: Dict[str, Any], stage: Optional[str] = None, save: Optional[bool] = None, source_path: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Update entry. If source_path is provided, this is a derivative and will be stored
+        under the source entry instead of as a separate top-level entry.
+        """
+        # If this is a derivative (has source_path), store under source entry
+        if source_path and source_path != file_path:
+            source_entry = self.ensure_entry(source_path)
+            
+            # Determine derivative type and store accordingly
+            if patch.get('type') == 'lora_watermarked':
+                # Watermarked LoRA output
+                if 'watermarked_outputs' not in source_entry:
+                    source_entry['watermarked_outputs'] = {}
+                lora_style = patch.get('lora', {}).get('style', 'unknown')
+                source_entry['watermarked_outputs'][lora_style] = {
+                    'path': file_path,
+                    'watermark': patch.get('watermark'),
+                    'timestamp': patch.get('watermark', {}).get('applied_at')
+                }
+            elif patch.get('type') in ['lora_processed']:
+                # LoRA processed output
+                if 'lora_outputs' not in source_entry:
+                    source_entry['lora_outputs'] = {}
+                lora_style = patch.get('lora', {}).get('style', 'unknown')
+                source_entry['lora_outputs'][lora_style] = {
+                    'path': file_path,
+                    'timestamp': patch.get('lora', {}).get('timestamp')
+                }
+            elif patch.get('type') in ['watermarked', 'preprocessed']:
+                # Regular watermarked or preprocessed - store under derivatives
+                if 'derivatives' not in source_entry:
+                    source_entry['derivatives'] = {}
+                source_entry['derivatives'][patch.get('type')] = {
+                    'path': file_path,
+                    'timestamp': utc_now_iso_z()
+                }
+            
+            if stage:
+                self.mark_stage(source_path, stage)
+            if save is None:
+                save = self.auto_save
+            if save:
+                self.save()
+            return source_entry
+        
+        # Normal top-level entry (source image)
         entry = self.ensure_entry(file_path)
         # shallow merge & nested dict merge
         for k, v in patch.items():

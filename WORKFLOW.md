@@ -12,10 +12,10 @@ Three-phase pipeline for processing photos from Apple Photos through LoRA artist
 {lib_root}/
 │
 ├── phase1_extract/              # PHASE 1: Extract & Prepare
-│   ├── raw/                     # Apple Photos exports (by album)
+│   ├── albums/                  # Apple Photos exports (by album)
 │   │   └── [AlbumName]/         # One folder per album
 │   │       └── IMG_*.jpg        # Original exports with EXIF/GPS
-│   ├── scaled/                  # Preprocessed images (2048px max)
+│   ├── scaled/                  # Preprocessed images (1024px max)
 │   │   └── [AlbumName]/         # Album structure preserved
 │   │       └── image.webp       # Optimized WebP format
 │   ├── watermarked/             # Watermarked images (ready for LoRA)
@@ -158,31 +158,31 @@ File: `config/pipeline_config.json` → `lora_processing`
 #### Single Style - All Images
 
 ```bash
-python main.py --lora American_Comic --batch
+python core/lora_transformer.py --lora American_Comic --batch
 ```
 
 #### Single Style - Specific Album
 
 ```bash
-python main.py --lora Impressionism --batch --input "$SKICYCLERUN_LIB_ROOT/images/watermarked/VacationPhotos"
+python core/lora_transformer.py --lora Impressionism --batch --input "$SKICYCLERUN_LIB_ROOT/images/watermarked/VacationPhotos"
 ```
 
 #### Single Style - Single Image
 
 ```bash
-python main.py --lora Van_Gogh --input "$SKICYCLERUN_LIB_ROOT/images/watermarked/AlbumName/image.webp"
+python core/lora_transformer.py --lora Van_Gogh --input "$SKICYCLERUN_LIB_ROOT/images/watermarked/AlbumName/image.webp"
 ```
 
 #### Custom Seed (Reproducibility)
 
 ```bash
-python main.py --lora Monet --batch --seed 42
+python core/lora_transformer.py --lora Monet --batch --seed 42
 ```
 
 #### Override LoRA Strength
 
 ```bash
-python main.py --lora LEGO --batch --lora-scale 0.9 --text-encoder-scale 0.7
+python core/lora_transformer.py --lora LEGO --batch --lora-scale 0.9 --text-encoder-scale 0.7
 ```
 
 ### Batch Processing Strategy
@@ -192,7 +192,7 @@ Process each album with multiple styles:
 ```bash
 # Album: VacationPhotos with 3 styles
 for style in American_Comic Impressionism Watercolor; do
-  python main.py --lora $style --batch --input "$SKICYCLERUN_LIB_ROOT/images/watermarked/VacationPhotos"
+  python core/lora_transformer.py --lora $style --batch --input "$SKICYCLERUN_LIB_ROOT/images/watermarked/VacationPhotos"
 done
 ```
 

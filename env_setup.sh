@@ -1,5 +1,30 @@
 #!/usr/bin/env bash
+# ============================================================================
+# SkiCycleRun Environment Setup
+# ============================================================================
 # Environment bootstrapper for SkiCycleRun development sessions.
+# Sets up required environment variables for image processing pipeline.
+#
+# USAGE:
+#   source ./env_setup.sh <images_root> [huggingface_cache]
+#
+# ARGUMENTS:
+#   images_root        - Path to root directory for pipeline data
+#                        (albums, preprocessed, lora_processed, etc.)
+#   huggingface_cache  - Optional: Path to HuggingFace model cache
+#                        (defaults to <parent_of_images_root>/models)
+#
+# EXAMPLE:
+#   source ./env_setup.sh /Volumes/MySSD/skicyclerun.i2i /Volumes/MySSD/huggingface
+#
+# EXPORTS:
+#   SKICYCLERUN_LIB_ROOT    - Pipeline data root directory
+#   HUGGINGFACE_CACHE_LIB   - HuggingFace model cache location
+#   HF_HOME                 - HuggingFace home directory
+#   HUGGINGFACE_CACHE       - HuggingFace cache directory
+#   HF_DATASETS_CACHE       - HuggingFace datasets cache
+#
+# ============================================================================
 
 _env_setup_label="[env_setup]"
 _env_setup_hint="source ./env_setup.sh <images_root> [huggingface_cache]"

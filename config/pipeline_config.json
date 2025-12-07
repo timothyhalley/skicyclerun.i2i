@@ -89,21 +89,41 @@
   },
   "watermark": {
     "enabled": true,
-    "format": "SkiCycleRun © {year} {astro_symbol} {location}",
+    "layout": "two_line",
+    "location_line": {
+      "format": "{location}",
+      "use_display_name": true,
+      "font_size": 28,
+      "min_size": 20,
+      "color": [255, 255, 255, 220],
+      "stroke_color": [0, 0, 0, 255],
+      "stroke_width": 3
+    },
+    "copyright_line": {
+      "format": "SkiCycleRun © {year} {symbol}",
+      "font_size": 16,
+      "min_size": 12,
+      "color": [255, 255, 255, 180],
+      "stroke_color": [0, 0, 0, 200],
+      "stroke_width": 2
+    },
+    "line_spacing": 8,
+    "symbol": "▲",
+    "fixed_year": 2026,
     "year_offset": 1,
-    "include_landmark": true,
+    "include_landmark": false,
     "landmark_min_score": 0.6,
     "landmark_max_distance_m": 300,
     "landmark_format": " — {name}",
     "font": {
-      "path": "fonts/asimovian/Asimovian.ttf",
-      "size": 36,
-      "min_size": 20,
-      "max_width_percent": 60,
-      "fit_mode": "shrink_to_fit",
-      "color": [255, 255, 255, 220],
-      "stroke_color": [0, 0, 0, 255],
-      "stroke_width": 3
+      "path": "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+      "fallback_paths": [
+        "fonts/asimovian/Asimovian-Regular.ttf",
+        "/System/Library/Fonts/Supplemental/Arial.ttf",
+        "/System/Library/Fonts/Helvetica.ttc"
+      ],
+      "max_width_percent": 80,
+      "fit_mode": "shrink_to_fit"
     },
     "position": "bottom_right",
     "margin": { "x": 50, "y": 40 },
@@ -146,6 +166,13 @@
     "cache_dir": "{huggingface_cache}",
     "prompt": "",
     "negative_prompt": ""
+  },
+  "ollama": {
+    "enabled": true,
+    "endpoint": "http://localhost:11434",
+    "model": "mixtral:8x7b",
+    "timeout": 10,
+    "fallback_on_error": true
   },
   "s3_deployment": {
     "enabled": true,

@@ -6,6 +6,7 @@ import json
 import os
 import time
 import subprocess
+import logging
 from pathlib import Path
 from datetime import datetime
 from utils.config_utils import resolve_config_placeholders
@@ -17,6 +18,23 @@ from core.watermark_applicator import WatermarkApplicator
 from core.image_preprocessor import ImagePreprocessor
 from core.master_store import MasterStore
 from utils.logger import logInfo, logError, logWarn
+
+# Setup file logging - will be initialized in main() with stage info
+
+
+def find_images_in_directory(directory: Path) -> List[Path]:
+    """
+    Find all image files in directory using consistent extension patterns.
+    Returns list of image file paths.
+    """
+    extensions = ['jpg', 'jpeg', 'png', 'heic']
+    image_files = []
+    
+    for ext in extensions:
+        image_files.extend(directory.glob(f'**/*.{ext}'))
+        image_files.extend(directory.glob(f'**/*.{ext.upper()}'))
+    
+    return image_files
 
 
 class PipelineRunner:
@@ -87,82 +105,78 @@ class PipelineRunner:
         except Exception as e:
             logError(f"❌ Export error: {e}")
     
-    def run_cleanup_stage(self):
+    def run_cleanup_stage(self, stages_to_run: List[str] = None):
         """Stage 0: Archive old work before new export (prevents duplicates)"""
         if not self.config.get('cleanup', {}).get('enabled', False):
             logInfo("⏭️  Cleanup stage disabled, skipping...")
             return
         
-        logInfo("🧹 Stage 0: Archiving old work before new export")
+        # Check if export stage is in the run list - only archive albums if we're doing a new export
+        will_export = 'export' in (stages_to_run or [])
+        
+        if will_export:
+            logInfo("🧹 Stage 0: Archiving old work before new export")
+        else:
+            logInfo("🧹 Stage 0: Selective cleanup (keeping existing albums)")
+        
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         
         # Archive old outputs if configured
         if self.config['cleanup'].get('archive_old_outputs', False):
-            archive_base = Path(self.paths.get('archive'))
-            archive_albums_path = Path(self.paths.get('archive_albums'))
-            archive_metadata_path = Path(self.paths.get('archive_metadata'))
+            import shutil
+            import tempfile
             
-            # 1. Archive existing albums (from previous exports) to prevent duplicates
+            archive_base = Path(self.paths.get('archive'))
+            archive_base.mkdir(parents=True, exist_ok=True)
+            
+            archive_name = f"pipeline_{timestamp}"
+            archive_zip = archive_base / archive_name
+            
+            items_to_archive = []
+            
+            # Always check and archive these critical folders
             albums_path = Path(self.paths.get('apple_photos_export'))
             if albums_path.exists() and any(albums_path.iterdir()):
-                archive_dest = archive_albums_path / timestamp
-                archive_dest.mkdir(parents=True, exist_ok=True)
-                
-                moved_count = 0
-                for item in albums_path.glob('*'):
-                    if item.is_file() or item.is_dir():
-                        item.rename(archive_dest / item.name)
-                        moved_count += 1
-                
-                if moved_count > 0:
-                    logInfo(f"📦 Archived {moved_count} items from albums/ → {archive_dest}")
-                else:
-                    logInfo("ℹ️  No albums to archive (directory was empty)")
-            else:
-                logInfo("ℹ️  No existing albums directory to archive")
+                items_to_archive.append(('albums', albums_path))
             
-            # 2. Version metadata catalog if it exists
-            metadata_catalog = Path(self.paths.get('master_catalog'))
-            if metadata_catalog.exists():
-                # Find next version number
-                version = 1
-                existing_versions = list(archive_metadata_path.glob('master_v*_*.json'))
-                if existing_versions:
-                    version_nums = []
-                    for p in existing_versions:
-                        try:
-                            v = int(p.stem.split('_')[1].replace('v', ''))
-                            version_nums.append(v)
-                        except (IndexError, ValueError):
-                            continue
-                    if version_nums:
-                        version = max(version_nums) + 1
-                
-                archive_metadata_path.mkdir(parents=True, exist_ok=True)
-                versioned_catalog = archive_metadata_path / f"master_v{version}_{timestamp}.json"
-                
-                import shutil
-                shutil.copy2(metadata_catalog, versioned_catalog)
-                logInfo(f"📋 Versioned metadata: {versioned_catalog.name}")
-            else:
-                logInfo("ℹ️  No metadata catalog to version")
+            lora_path = Path(self.paths.get('lora_processed'))
+            if lora_path.exists() and any(lora_path.iterdir()):
+                items_to_archive.append(('lora_processed', lora_path))
             
-            # 3. Archive old final outputs (watermarked images)
-            final_dir = self.paths.get('watermarked_final')
-            if final_dir:
-                output_path = Path(final_dir)
-                if output_path.exists() and any(output_path.iterdir()):
-                    archive_dest = archive_base / f"watermarked_{timestamp}"
-                    archive_dest.mkdir(parents=True, exist_ok=True)
+            metadata_path = Path(self.paths.get('metadata_dir'))
+            if metadata_path.exists() and any(metadata_path.iterdir()):
+                items_to_archive.append(('metadata', metadata_path))
+            
+            if items_to_archive:
+                logInfo(f"📦 Creating compressed archive: {archive_name}.zip")
+                logInfo(f"   Archiving {len(items_to_archive)} folder(s): {', '.join([f[0] for f in items_to_archive])}")
+                
+                # Create temporary directory for organizing archive contents
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    temp_path = Path(temp_dir) / archive_name
+                    temp_path.mkdir()
                     
-                    moved_count = 0
-                    for item in output_path.glob('*'):
-                        if item.is_file():
-                            item.rename(archive_dest / item.name)
-                            moved_count += 1
+                    # Copy folders to temp directory
+                    for folder_name, source_path in items_to_archive:
+                        dest = temp_path / folder_name
+                        shutil.copytree(source_path, dest)
+                        logInfo(f"  ✓ Added {folder_name}/ to archive")
                     
-                    if moved_count > 0:
-                        logInfo(f"📦 Archived {moved_count} watermarked outputs → {archive_dest}")
+                    # Create zip archive
+                    shutil.make_archive(str(archive_zip), 'zip', temp_dir, archive_name)
+                    zip_size_mb = (archive_zip.with_suffix('.zip').stat().st_size) / (1024 * 1024)
+                    logInfo(f"✅ Compressed archive created: {archive_name}.zip ({zip_size_mb:.1f} MB)")
+                    
+                    # Only remove folders if we're doing a new export
+                    if will_export:
+                        for folder_name, source_path in items_to_archive:
+                            shutil.rmtree(source_path)
+                            source_path.mkdir(parents=True, exist_ok=True)
+                            logInfo(f"  ✓ Cleaned {folder_name}/ (will be replaced with new export)")
+                    else:
+                        logInfo(f"  ℹ️  Folders preserved (no export stage - keeping existing data)")
+            else:
+                logInfo("ℹ️  No content to archive (folders empty or don't exist)")
         
         logInfo("✅ Archive/cleanup complete - ready for new export")
     
@@ -179,15 +193,17 @@ class PipelineRunner:
         geo_extractor = GeoExtractor(self.config)
         raw_input_path = Path(self.paths.get('raw_input'))
         
-        # Process all images in input folder
-        image_files = list(raw_input_path.glob('**/*.jpg')) + \
-                     list(raw_input_path.glob('**/*.jpeg')) + \
-                     list(raw_input_path.glob('**/*.png'))
+        # Process all images in input folder using consistent extension finding
+        image_files = find_images_in_directory(raw_input_path)
         
         new_count = 0
         skipped_count = 0
         
         logInfo(f"📊 Found {len(image_files)} images in input folder...")
+        
+        if len(image_files) == 0:
+            logWarn(f"⚠️  No images found in {raw_input_path} - skipping metadata extraction")
+            return
         
         for idx, image_path in enumerate(image_files, 1):
             image_path_str = str(image_path)
@@ -200,14 +216,14 @@ class PipelineRunner:
             try:
                 metadata = geo_extractor.extract_metadata(image_path_str)
                 # In-memory legacy tracking removed; write only to master
-                # Write directly to master_store
+                # Write directly to master_store with comprehensive EXIF data
                 if self.master_store:
                     patch = {
-                        "exif": {
-                            "date_taken": metadata.get("date_taken"),
-                            "date_taken_utc": metadata.get("date_taken_utc"),
-                        },
+                        "exif": metadata.get("exif", {}),  # Comprehensive EXIF data
+                        "date_taken": metadata.get("date_taken"),
+                        "date_taken_utc": metadata.get("date_taken_utc"),
                         "gps": metadata.get("gps_coordinates"),
+                        "gps_coordinates": metadata.get("gps_coordinates"),  # Also store as gps_coordinates
                         "location": metadata.get("location"),
                         "location_formatted": metadata.get("location_formatted"),
                         "landmarks": metadata.get("landmarks"),
@@ -239,6 +255,17 @@ class PipelineRunner:
         preprocessor = ImagePreprocessor(self.config)
         raw_input_path = self.paths.get('raw_input')
         preprocessed_path = self.paths.get('preprocessed')
+        
+        # Check if there are any images to process (consistent with metadata_extraction)
+        input_path = Path(raw_input_path)
+        if not input_path.exists():
+            logWarn(f"⚠️  Input path does not exist: {raw_input_path} - skipping preprocessing")
+            return
+        
+        image_files = find_images_in_directory(input_path)
+        if len(image_files) == 0:
+            logWarn(f"⚠️  No images found in {raw_input_path} - skipping preprocessing")
+            return
         
         # Build a combined existing catalog from MasterStore for skipping and metadata merge
         existing_catalog = {}
@@ -294,9 +321,9 @@ class PipelineRunner:
                     "processed_timestamp": meta.get("processed_timestamp"),
                     "quality": meta.get("quality"),
                 }
+                source_image_path = meta.get("input_path")
                 patch = {
                     "type": "preprocessed",
-                    "source_path": meta.get("input_path"),
                     "preprocessing": section,
                 }
                 # Carry through helpful top-level fields if present
@@ -306,7 +333,8 @@ class PipelineRunner:
                     patch.setdefault('exif', {})['date_taken'] = meta.get('date_taken')
                 if meta.get('date_taken_utc'):
                     patch.setdefault('exif', {})['date_taken_utc'] = meta.get('date_taken_utc')
-                self.master_store.update_entry(out_path, patch, stage='preprocessing')
+                # Store preprocessed output under source entry as derivative
+                self.master_store.update_entry(out_path, patch, stage='preprocessing', source_path=source_image_path)
         
         logInfo("✅ Preprocessing complete")
     
@@ -427,12 +455,13 @@ class PipelineRunner:
                         "input_path": str(image_path),
                         "output_path": str(output_file),
                     }
+                    source_image_path = str(image_path)
                     patch = {
                         "type": "watermarked",
-                        "source_path": str(image_path),
                         "watermark": wm_block,
                     }
-                    self.master_store.update_entry(str(output_file), patch, stage='watermarking')
+                    # Store watermarked output under source entry as derivative
+                    self.master_store.update_entry(str(output_file), patch, stage='watermarking', source_path=source_image_path)
                 
                 watermarked_count += 1
                 
@@ -474,11 +503,17 @@ class PipelineRunner:
         no_gps = 0
 
         processed = 0
-        total = len(data)
+        # Count only originals (entries without source_path)
+        total = sum(1 for e in data.values() if not e.get('source_path'))
         last_pulse = time.time()
         logInfo(f"🔎 Sweep settings — poi_enabled: {getattr(extractor,'poi_enabled', False)}, only_missing: {self.sweep_only_missing}, path_filter: {bool(self.sweep_path_contains)}, limit: {self.sweep_limit or 'none'}")
+        logInfo(f"📊 Processing {total} original images (skipping {len(data) - total} derivatives)")
         try:
             for p, e in list(data.items()):
+                # Skip derivative files - they inherit location from source_path
+                if e.get('source_path'):
+                    continue
+                    
                 # Apply path filter if provided
                 if self.sweep_path_contains and self.sweep_path_contains not in p:
                     continue
@@ -486,12 +521,14 @@ class PipelineRunner:
                 has_loc = bool(e.get('location_formatted'))
                 if not gps:
                     no_gps += 1
+                    logWarn(f"⚠️  No GPS data: {Path(p).name}")
                     continue
                 # We still may enrich heading/POIs even if location already present
                 lat = gps.get('lat')
                 lon = gps.get('lon')
                 if lat is None or lon is None:
                     no_gps += 1
+                    logWarn(f"⚠️  Invalid GPS coordinates: {Path(p).name} (lat={lat}, lon={lon})")
                     continue
                 try:
                     patch = {}
@@ -504,12 +541,15 @@ class PipelineRunner:
                         skipped += 1
                         continue
 
-                    # Always backfill location if missing
-                    if not has_loc:
+                    # Always enhance location with Photon for better POI data
+                    # Even if location exists from Nominatim, Photon provides better POI identification
+                    if not has_loc or not e.get('location', {}).get('poi_found'):
                         loc = extractor.reverse_geocode(lat, lon)
                         if loc:
                             formatted = extractor.format_location(loc)
                             patch.update({"location": loc, "location_formatted": formatted})
+                            if loc.get('poi_found'):
+                                logInfo(f"  🎯 Enhanced POI: {loc.get('name', 'N/A')} ({loc.get('type', 'N/A')})")
 
                     # Extract heading from EXIF if missing
                     heading_block = None
@@ -564,6 +604,81 @@ class PipelineRunner:
                         pois = extractor.fetch_pois(lat, lon, heading_deg=heading_deg)
                         if pois:
                             patch['landmarks'] = pois
+
+                    # Generate enhanced watermark with Ollama
+                    # Regenerate if: no watermark exists OR no ollama_generation exists (wasn't generated with Ollama)
+                    should_generate = not e.get('enhanced_watermark') or not e.get('ollama_generation')
+                    if should_generate:
+                        ollama_config = self.config.get('ollama', {})
+                        if ollama_config.get('enabled', False):
+                            try:
+                                from core.ollama_watermark import OllamaWatermarkGenerator
+                                ollama_gen = OllamaWatermarkGenerator(
+                                    endpoint=ollama_config.get('endpoint', 'http://localhost:11434'),
+                                    model=ollama_config.get('model', 'llama3.2:3b')
+                                )
+                                # Merge current entry with patches for complete metadata
+                                temp_metadata = {**e, **patch}
+                                
+                                # Log input context for Ollama
+                                location_str = temp_metadata.get('location_formatted', 'Unknown')
+                                poi_name = temp_metadata.get('location', {}).get('name')
+                                poi_type = temp_metadata.get('location', {}).get('type')
+                                date_taken = temp_metadata.get('date_taken', '')
+                                logInfo(f"  🤖 Ollama input - Location: {location_str}, POI: {poi_name} (type: {poi_type}), Date: {date_taken}")
+                                
+                                result = ollama_gen.generate_watermark(
+                                    temp_metadata,
+                                    timeout=ollama_config.get('timeout', 10)
+                                )
+                                
+                                # Store Ollama context and output
+                                ollama_context = {
+                                    'input_location': location_str,
+                                    'input_poi': poi_name,
+                                    'input_poi_type': poi_type,
+                                    'input_date': date_taken,
+                                    'model': ollama_config.get('model', 'llama3.2:3b'),
+                                    'timestamp': utc_now_iso_z()
+                                }
+                                
+                                if result:
+                                    # Extract watermark and enhanced data from result dict
+                                    watermark_text = result.get('watermark', '')
+                                    enhanced_data = result.get('enhanced_data')
+                                    
+                                    patch['watermark_text'] = watermark_text
+                                    patch['ollama_generation'] = {**ollama_context, 'output': watermark_text, 'method': 'llm'}
+                                    
+                                    # Store full enhanced data if available (for EXIF embedding later)
+                                    if enhanced_data:
+                                        patch['ollama_enhanced_data'] = enhanced_data
+                                    
+                                    logInfo(f"  ✨ Ollama generated: \"{watermark_text}\"")
+                                elif ollama_config.get('fallback_on_error', True):
+                                    fallback_text = ollama_gen.generate_fallback(temp_metadata)
+                                    patch['watermark_text'] = fallback_text
+                                    patch['ollama_generation'] = {**ollama_context, 'output': fallback_text, 'method': 'fallback'}
+                                    logInfo(f"  📝 Ollama fallback: \"{fallback_text}\"")
+                            except Exception as ollama_err:
+                                logWarn(f"⚠️  Ollama watermark generation failed for {p}: {ollama_err}")
+                                if ollama_config.get('fallback_on_error', True):
+                                    from core.ollama_watermark import OllamaWatermarkGenerator
+                                    ollama_gen = OllamaWatermarkGenerator()
+                                    temp_metadata = {**e, **patch}
+                                    fallback_text = ollama_gen.generate_fallback(temp_metadata)
+                                    patch['watermark_text'] = fallback_text
+                                    patch['ollama_generation'] = {
+                                        'input_location': temp_metadata.get('location_formatted', 'Unknown'),
+                                        'input_poi': temp_metadata.get('location', {}).get('name'),
+                                        'input_poi_type': temp_metadata.get('location', {}).get('type'),
+                                        'input_date': temp_metadata.get('date_taken', ''),
+                                        'output': fallback_text,
+                                        'method': 'error_fallback',
+                                        'error': str(ollama_err),
+                                        'timestamp': utc_now_iso_z()
+                                    }
+                                    logInfo(f"  📝 Ollama error fallback: \"{fallback_text}\"")
 
                     # Write updates if any
                     if patch:
@@ -650,10 +765,10 @@ class PipelineRunner:
             logInfo(f"📂 Output folder: {output_rel}")
             logInfo("=" * 80)
             
-            # Call main.py with batch processing
+            # Call LoRA transformer with batch processing
             cmd = [
                 sys.executable, 
-                'main.py',
+                'core/lora_transformer.py',
                 '--lora', lora_name,
                 '--batch',
                 '--input-folder', input_folder,
@@ -696,7 +811,7 @@ class PipelineRunner:
         
         cmd = [
             sys.executable,
-            'postprocess_lora.py',
+            'utils/postprocess_lora.py',
             '--input', lora_output,
             '--output', watermark_output,
             '--force'  # Always re-watermark when running from pipeline
@@ -865,9 +980,41 @@ class PipelineRunner:
         logInfo(f"🚀 Starting SkiCycleRun Pipeline")
         logInfo(f"📋 Stages to run: {', '.join(stages)}")
         
+        # Check if Ollama is needed and available
+        ollama_stages = ['geocode_sweep', 'post_lora_watermarking']
+        needs_ollama = any(stage in stages for stage in ollama_stages)
+        
+        if needs_ollama:
+            ollama_config = self.config.get('ollama', {})
+            if ollama_config.get('enabled', False):
+                endpoint = ollama_config.get('endpoint', 'http://localhost:11434')
+                logInfo(f"🤖 Checking Ollama availability at {endpoint}...")
+                
+                try:
+                    import requests
+                    response = requests.get(f"{endpoint}/api/tags", timeout=3)
+                    if response.status_code == 200:
+                        logInfo(f"✅ Ollama is available")
+                    else:
+                        logError(f"❌ Ollama endpoint responded with status {response.status_code}")
+                        logError(f"💡 Please start Ollama before running stages that require it: {', '.join([s for s in ollama_stages if s in stages])}")
+                        return
+                except requests.exceptions.ConnectionError:
+                    logError(f"❌ Cannot connect to Ollama at {endpoint}")
+                    logError(f"💡 Please start Ollama (e.g., 'ollama serve') before running these stages: {', '.join([s for s in ollama_stages if s in stages])}")
+                    return
+                except requests.exceptions.Timeout:
+                    logError(f"❌ Ollama connection timed out at {endpoint}")
+                    logError(f"💡 Please check if Ollama is running and accessible")
+                    return
+                except Exception as e:
+                    logError(f"❌ Error checking Ollama availability: {e}")
+                    logError(f"💡 Please ensure Ollama is running at {endpoint}")
+                    return
+        
         stage_map = {
             'export': self.run_export_stage,
-            'cleanup': self.run_cleanup_stage,
+            'cleanup': lambda: self.run_cleanup_stage(stages),
             'metadata_extraction': self.run_metadata_extraction_stage,
             'geocode_sweep': self.run_geocode_sweep_stage,
             'preprocessing': self.run_preprocessing_stage,
@@ -879,11 +1026,17 @@ class PipelineRunner:
         
         for stage in stages:
             if stage in stage_map:
+                # Log stage header
+                logInfo("\n" + "=" * 80)
+                logInfo(f"▶️  STAGE: {stage.upper().replace('_', ' ')}")
+                logInfo("=" * 80)
                 stage_map[stage]()
             else:
                 logWarn(f"⚠️  Unknown stage: {stage}")
         
+        logInfo("\n" + "=" * 80)
         logInfo("🎉 Pipeline complete!")
+        logInfo("=" * 80)
 
     def check_config(self) -> bool:
         """Report key path status and ensure required directories exist."""
@@ -1051,8 +1204,13 @@ if __name__ == "__main__":
     parser.add_argument("--sweep-skip-poi", action="store_true", help="Skip POI fetching during sweep")
     parser.add_argument("--sweep-skip-heading", action="store_true", help="Skip EXIF heading extraction during sweep")
     parser.add_argument("--sweep-pulse-sec", type=int, default=5, help="Heartbeat interval in seconds for geocode sweep progress")
+    parser.add_argument("--verbose", action="store_true", help="Enable verbose output to terminal")
     
     args = parser.parse_args()
+    
+    # Store verbose flag globally for logger to use
+    import utils.logger as logger_module
+    logger_module.VERBOSE = args.verbose
 
     if not args.check_config:
         missing_envs = []
@@ -1106,5 +1264,24 @@ if __name__ == "__main__":
     stages_to_run = args.stages
     if stages_to_run and len(stages_to_run) == 1 and ',' in stages_to_run[0]:
         stages_to_run = [s.strip() for s in stages_to_run[0].split(',')]
+
+    # Setup file logging
+    log_dir = Path("logs")
+    log_dir.mkdir(exist_ok=True)
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    log_file = log_dir / f"pipeline_{timestamp}.log"
+    
+    file_handler = logging.FileHandler(log_file)
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(logging.Formatter('%(message)s'))
+    logging.getLogger().addHandler(file_handler)
+    logging.getLogger().setLevel(logging.INFO)
+    
+    # Log header with command info
+    logInfo("=" * 80)
+    logInfo(f"📝 Pipeline Run: {timestamp}")
+    logInfo(f"📋 Command: pipeline.py --stages {' '.join(stages_to_run or [])} {'--yes' if args.yes else ''}")
+    logInfo(f"📁 Log file: {log_file}")
+    logInfo("=" * 80)
 
     runner.run_pipeline(stages_to_run)

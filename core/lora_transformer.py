@@ -6,6 +6,9 @@ import logging
 import time
 import gc
 
+# Add parent directory to path so imports work from core/ subdirectory
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from datetime import datetime
 from utils.cli import load_config, list_loras
 from utils.config_utils import expand_with_paths
@@ -90,13 +93,13 @@ def parse_args():
         description="FLUX Kontext Image-to-Image Transform CLI - Apply LoRA style transfers to images",
         epilog="""
 Examples:
-  python main.py                              # Process default image from config
-  python main.py --file photo.jpg             # Process specific image
-  python main.py --batch                      # Process all images in input folder
-  python main.py --lora Anime --file pic.jpg  # Use different LoRA style
-  python main.py --dry-run                    # Preview what would be processed
-  python main.py --list-loras                 # Show available LoRA styles
-  python main.py --help                       # Show this help message
+  python core/lora_transformer.py                              # Process default image from config
+  python core/lora_transformer.py --file photo.jpg             # Process specific image
+  python core/lora_transformer.py --batch                      # Process all images in input folder
+  python core/lora_transformer.py --lora Anime --file pic.jpg  # Use different LoRA style
+  python core/lora_transformer.py --dry-run                    # Preview what would be processed
+  python core/lora_transformer.py --list-loras                 # Show available LoRA styles
+  python core/lora_transformer.py --help                       # Show this help message
 
 Default config: config/pipeline_config.json (override with --config)
         """,
@@ -214,8 +217,8 @@ def main():
                 logInfo(f"  • {name:<20} - {info['description']}")
             logInfo("=" * 80)
             logInfo(f"\nTotal: {len(lora_registry)} styles available")
-            logInfo("\nUsage: python main.py --lora <style_name> --file <image>")
-            logInfo("Example: python main.py --lora 3D_Chibi --file photo.jpg")
+            logInfo("\nUsage: python core/lora_transformer.py --lora <style_name> --file <image>")
+            logInfo("Example: python core/lora_transformer.py --lora 3D_Chibi --file photo.jpg")
         except Exception as e:
             logError(f"Failed to load LoRA registry: {e}")
         sys.exit(0)
@@ -509,7 +512,7 @@ def main():
             logInfo("        --cpu-fallback           Force CPU mode (slower, unlimited memory)", console_only=True)
             logInfo("        --dry-run                Show what would be processed (default when no action specified)", console_only=True)
             logInfo("        --list-loras             List available LoRA adapters", console_only=True)
-            logInfo("\n        Example: python main.py --file my_photo.jpg --lora Anime", console_only=True)
+            logInfo("\n        Example: python core/lora_transformer.py --file my_photo.jpg --lora Anime", console_only=True)
         
         logInfo("\n✅ Dry run complete - no memory or GPU resources used", console_only=True)
         sys.exit(0)
@@ -838,16 +841,21 @@ def main():
         total_secs = int(total_time % 60)
         # Format: 06h 19m 38s
         total_time_str = f"{total_hours:02d}h {total_mins:02d}m {total_secs:02d}s"
-        avg_time = total_time / total_files
-        avg_mins = int(avg_time // 60)
-        avg_secs = int(avg_time % 60)
-        avg_time_str = f"{avg_mins}m {avg_secs}s"
+        
+        # Calculate average time only for processed images (exclude skipped)
+        if processed_count > 0:
+            avg_time = total_time / processed_count
+            avg_mins = int(avg_time // 60)
+            avg_secs = int(avg_time % 60)
+            avg_time_str = f"{avg_mins}m {avg_secs}s"
+        else:
+            avg_time_str = "N/A"
         
         print("\n" + "=" * 80)
         print(f"🎉 BATCH COMPLETE")
         print(f"📊 Total: {total_files} images | Processed: {processed_count} | Skipped: {skipped_count} | Failed: {failed_count}")
         print(f"⏱️  Total time: {total_time_str}")
-        print(f"📊 Average time per image: {avg_time_str}")
+        print(f"📊 Average time per processed image: {avg_time_str}")
         print("=" * 80 + "\n")
     
     # Final cleanup
