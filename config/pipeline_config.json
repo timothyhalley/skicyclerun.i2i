@@ -6,7 +6,7 @@
       "export",
       "cleanup",
       "metadata_extraction",
-      "geocode_sweep",
+      "llm_image_analysis",
       "preprocessing",
       "lora_processing",
       "post_lora_watermarking",
@@ -61,7 +61,7 @@
     "poi_enrichment": {
       "enabled": true,
       "radius_m": 600,
-      "max_results": 5,
+      "max_results": 10,
       "timeout_seconds": 15,
       "overpass_url": "https://overpass-api.de/api/interpreter",
       "categories": [
@@ -69,11 +69,18 @@
         "attraction",
         "viewpoint",
         "historic",
-        "natural"
+        "natural",
+        "bar",
+        "pub",
+        "restaurant",
+        "cafe",
+        "nightclub",
+        "theatre",
+        "leisure"
       ],
-      "use_heading_filter": true,
+      "use_heading_filter": false,
       "fov_degrees": 60,
-      "max_distance_m": 500,
+      "max_distance_m": 100,
       "heading_weight": 0.7,
       "distance_weight": 0.3
     }
@@ -135,13 +142,7 @@
     "registry_path": "config/lora_registry.json",
     "batch_mode": true,
     "preserve_metadata": true,
-    "loras_to_process": [
-      "PencilDrawing",
-      "FractalGeometry",
-      "Afremov",
-      "Gorillaz",
-      "Origami"
-    ],
+    "loras_to_process": ["Afremov"],
     "_Available_loras": [
       "PencilDrawing",
       "FractalGeometry",
@@ -166,6 +167,13 @@
     "cache_dir": "{huggingface_cache}",
     "prompt": "",
     "negative_prompt": ""
+  },
+  "llm_image_analysis": {
+    "enabled": true,
+    "endpoint": "http://localhost:11434",
+    "model": "ministral-3:8b",
+    "timeout": 30,
+    "fallback_on_error": true
   },
   "ollama": {
     "enabled": true,

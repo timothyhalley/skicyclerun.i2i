@@ -57,9 +57,16 @@ class MasterStore:
             self.data[file_path] = {
                 "file_path": file_path,
                 "file_name": p.name,
-                "created_at": utc_now_iso_z(),
-                "pipeline": {"stages": []}
+                "pipeline": {
+                    "stages": [],
+                    "timestamps": {},
+                    "last_updated": utc_now_iso_z()
+                }
             }
+        else:
+            # Update last_updated timestamp on any access
+            self.data[file_path].setdefault("pipeline", {}).setdefault("timestamps", {})
+            self.data[file_path]["pipeline"]["last_updated"] = utc_now_iso_z()
         return self.data[file_path]
 
     def mark_stage(self, file_path: str, stage: str) -> None:
@@ -117,12 +124,10 @@ class MasterStore:
         
         # Normal top-level entry (source image)
         entry = self.ensure_entry(file_path)
-        # shallow merge & nested dict merge
+        # COMPLETE REPLACEMENT: overwrite values, don't merge dicts
+        # This ensures old fields get removed when schema changes
         for k, v in patch.items():
-            if isinstance(v, dict) and isinstance(entry.get(k), dict):
-                entry[k].update(v)
-            else:
-                entry[k] = v
+            entry[k] = v
         if stage:
             self.mark_stage(file_path, stage)
         if save is None:

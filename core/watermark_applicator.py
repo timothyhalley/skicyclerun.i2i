@@ -291,47 +291,16 @@ class WatermarkApplicator:
         line_spacing = self.watermark_config.get('line_spacing', 8)
         use_display_name = loc_config.get('use_display_name', False)
         
-        # Build location text - PRIORITY ORDER:
-        # 1. Enhanced watermark from Ollama (if available)
-        # 2. POI name, display_name, or landmarks (if use_display_name=true)
-        # 3. Fallback to location_formatted
-        location_text = ""
+        # LINE 1: LLM-generated watermark (from llm_image_analysis.watermark)
+        llm_analysis = metadata.get('llm_image_analysis', {})
+        location_text = llm_analysis.get('watermark', '').strip() if llm_analysis else ''
         
-        # FIRST: Check for watermark text from Ollama
-        watermark_text_field = metadata.get('watermark_text')
-        if watermark_text_field:
-            location_text = watermark_text_field
-        # SECOND: Check ollama_generation output as fallback
-        elif metadata.get('ollama_generation', {}).get('output'):
-            location_text = metadata['ollama_generation']['output']
-        # THIRD: Build from location data if use_display_name enabled
-        elif use_display_name:
-            location_info = metadata.get('location', {})
-            if isinstance(location_info, dict):
-                # Use POI name if found
-                if location_info.get('poi_found') and location_info.get('name'):
-                    location_text = location_info.get('name')
-                # Use display_name
-                elif location_info.get('display_name'):
-                    location_text = location_info.get('display_name')
-                # Use landmark name if close enough
-                elif metadata.get('landmarks'):
-                    landmarks = metadata.get('landmarks', [])
-                    if landmarks and len(landmarks) > 0:
-                        closest = landmarks[0]
-                        if closest.get('distance_m', 999) < 50:  # Within 50m
-                            location_text = closest.get('name', '')
-                
-                # Fallback to formatted location
-                if not location_text:
-                    location_text = metadata.get('location_formatted', 'Unknown Location')
-            else:
-                location_text = metadata.get('location_formatted', 'Unknown Location')
-        else:
-            # FALLBACK: Just use formatted location
-            location_text = metadata.get('location_formatted', 'Unknown Location')
+        # If no LLM watermark, skip line 1 (don't show anything)
+        if not location_text:
+            location_text = None
         
-        # Build copyright text with location
+        # LINE 2: Copyright with location
+        # Build year and symbol
         fixed_year = self.watermark_config.get('fixed_year')
         if fixed_year:
             year = fixed_year
@@ -339,127 +308,89 @@ class WatermarkApplicator:
             year = datetime.now().year + self.watermark_config.get('year_offset', 1)
         symbol = self.watermark_config.get('symbol', '▲')
         
-        # Extract city and state/country for copyright line
-        copyright_location = ""
+        # Extract location from catalog (master.json structure)
         location_info = metadata.get('location', {})
-        if location_info:
-            address = location_info.get('address', {})
-            city = address.get('city', '') or address.get('town', '') or address.get('village', '')
-            state = address.get('state', '')
-            country = address.get('country', '')
-            
-            # Build "City, State" or "City, Country" format
-            if city and state:
-                copyright_location = f"{city}, {state}"
-            elif city and country:
-                copyright_location = f"{city}, {country}"
-            elif state and country:
-                copyright_location = f"{state}, {country}"
-            elif country:
-                copyright_location = country
+        city = location_info.get('city', '')
+        state = location_info.get('state', '')
         
-        # If we couldn't extract from address, try parsing display_name
-        if not copyright_location and location_info:
-            display_name = location_info.get('display_name', '')
-            if display_name:
-                # Parse display_name, filtering out zip codes and postal codes
-                import re
-                parts = [p.strip() for p in display_name.split(',')]
-                filtered_parts = []
-                for p in parts:
-                    # Skip zip codes (5+ digits, possibly with dash)
-                    if p.replace('-', '').isdigit() and len(p.replace('-', '')) >= 5:
-                        continue
-                    # Skip Canadian postal codes (A1A format like V1Y)
-                    if re.match(r'^[A-Z]\d[A-Z]', p):
-                        continue
-                    # Skip street numbers (leading digits)
-                    if re.match(r'^\d+\s', p):
-                        continue
-                    filtered_parts.append(p)
-                
-                # Take last 2 meaningful parts (city, state/country)
-                if len(filtered_parts) >= 2:
-                    copyright_location = ', '.join(filtered_parts[-2:])
-                elif len(filtered_parts) == 1:
-                    copyright_location = filtered_parts[0]
-        
-        # Format copyright text
-        if copyright_location:
-            copyright_text = f"{copyright_location} {symbol} SkiCycleRun © {year}"
+        # Build copyright line: "City, State ▲ SkiCycleRun © Year"
+        if city and state:
+            copyright_text = f"{city}, {state} {symbol} SkiCycleRun © {year}"
+        elif city:
+            copyright_text = f"{city} {symbol} SkiCycleRun © {year}"
         else:
+            # No location data - just show copyright
             copyright_text = f"SkiCycleRun © {year} {symbol}"
         
-        # Get fonts and max width
+        # Get fonts and sizing
         loc_size = loc_config.get('font_size', 36)
         copy_size = copy_config.get('font_size', 18)
         max_width = int(image_size[0] * self.font_config.get('max_width_percent', 80) / 100)
-        loc_min = loc_config.get('min_size', 20)
-        absolute_min_size = 16  # Don't go below this - wrap instead
+        margin_x = self.margin.get('x', 50)
+        margin_y = self.margin.get('y', 40)
         
-        # Try shrinking font first
-        loc_font = self._get_font(loc_size)
-        while loc_size > absolute_min_size:
-            bbox = draw.textbbox((0, 0), location_text, font=loc_font)
-            if (bbox[2] - bbox[0]) <= max_width:
-                break
-            loc_size -= 1
-            loc_font = self._get_font(loc_size)
-        
-        # If still too wide even at minimum size, wrap to multiple lines
-        loc_lines = [location_text]
-        bbox = draw.textbbox((0, 0), location_text, font=loc_font)
-        if (bbox[2] - bbox[0]) > max_width:
-            # Wrap text intelligently at natural breaks (commas, "and", "near")
-            loc_lines = self._wrap_text_smart(location_text, draw, loc_font, max_width)
-        
-        # Copyright font (no shrinking needed, it's small)
-        copy_font = self._get_font(copy_size)
-        
-        # Measure location lines (could be multiple now)
+        # Process LINE 1 (LLM watermark) if available
+        loc_lines = []
         loc_line_heights = []
-        loc_max_width = 0
-        for line in loc_lines:
-            bbox = draw.textbbox((0, 0), line, font=loc_font)
-            line_width = bbox[2] - bbox[0]
-            line_height = bbox[3] - bbox[1]
-            loc_line_heights.append(line_height)
-            loc_max_width = max(loc_max_width, line_width)
+        loc_total_height = 0
         
-        loc_total_height = sum(loc_line_heights) + (len(loc_lines) - 1) * (line_spacing // 2)
+        if location_text:
+            absolute_min_size = 16
+            loc_font = self._get_font(loc_size)
+            
+            # Try shrinking font to fit
+            while loc_size > absolute_min_size:
+                bbox = draw.textbbox((0, 0), location_text, font=loc_font)
+                if (bbox[2] - bbox[0]) <= max_width:
+                    break
+                loc_size -= 1
+                loc_font = self._get_font(loc_size)
+            
+            # If still too wide, wrap to multiple lines
+            loc_lines = [location_text]
+            bbox = draw.textbbox((0, 0), location_text, font=loc_font)
+            if (bbox[2] - bbox[0]) > max_width:
+                loc_lines = self._wrap_text_smart(location_text, draw, loc_font, max_width)
+            
+            # Measure each line
+            for line in loc_lines:
+                bbox = draw.textbbox((0, 0), line, font=loc_font)
+                loc_line_heights.append(bbox[3] - bbox[1])
+            
+            loc_total_height = sum(loc_line_heights) + (len(loc_lines) - 1) * (line_spacing // 2)
         
-        # Measure copyright line
+        # Process LINE 2 (Copyright)
+        copy_font = self._get_font(copy_size)
         copy_bbox = draw.textbbox((0, 0), copyright_text, font=copy_font)
         copy_width = copy_bbox[2] - copy_bbox[0]
         copy_height = copy_bbox[3] - copy_bbox[1]
         
-        # Calculate total block size and position
-        total_height = loc_total_height + line_spacing + copy_height
-        margin_x = self.margin.get('x', 50)
-        margin_y = self.margin.get('y', 40)
-        
-        # Position at bottom-right (all lines right-aligned)
+        # Calculate total height and position
+        total_height = loc_total_height + (line_spacing if location_text else 0) + copy_height
         base_y = image_size[1] - total_height - margin_y
         
-        # Draw location lines (multiple if wrapped)
+        # Draw LINE 1 (LLM watermark) if available
         loc_y = base_y
-        for i, line in enumerate(loc_lines):
-            bbox = draw.textbbox((0, 0), line, font=loc_font)
-            line_width = bbox[2] - bbox[0]
-            loc_x = image_size[0] - line_width - margin_x
-            
+        if location_text and loc_lines:
             loc_color = tuple(loc_config.get('color', [255, 255, 255, 220]))
             loc_stroke = tuple(loc_config.get('stroke_color', [0, 0, 0, 255]))
             loc_stroke_width = loc_config.get('stroke_width', 3)
             
-            draw.text((loc_x, loc_y), line, font=loc_font, fill=loc_color,
-                     stroke_width=loc_stroke_width, stroke_fill=loc_stroke, embedded_color=True)
+            for i, line in enumerate(loc_lines):
+                bbox = draw.textbbox((0, 0), line, font=loc_font)
+                line_width = bbox[2] - bbox[0]
+                loc_x = image_size[0] - line_width - margin_x
+                
+                draw.text((loc_x, loc_y), line, font=loc_font, fill=loc_color,
+                         stroke_width=loc_stroke_width, stroke_fill=loc_stroke, embedded_color=True)
+                
+                loc_y += loc_line_heights[i] + (line_spacing // 2 if i < len(loc_lines) - 1 else 0)
             
-            loc_y += loc_line_heights[i] + (line_spacing // 2 if i < len(loc_lines) - 1 else 0)
+            loc_y += line_spacing
         
-        # Position and draw copyright line
+        # Draw LINE 2 (Copyright)
         copy_x = image_size[0] - copy_width - margin_x
-        copy_y = loc_y + line_spacing
+        copy_y = loc_y
         
         copy_color = tuple(copy_config.get('color', [255, 255, 255, 180]))
         copy_stroke = tuple(copy_config.get('stroke_color', [0, 0, 0, 200]))

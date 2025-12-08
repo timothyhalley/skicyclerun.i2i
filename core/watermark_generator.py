@@ -51,6 +51,15 @@ class WatermarkGenerator:
     
     def generate_from_metadata(self, metadata: Dict) -> str:
         """Generate watermark from extracted metadata"""
+        # PRIORITY 1: Check for LLM-generated watermark
+        llm_analysis = metadata.get('llm_image_analysis', {})
+        if llm_analysis and llm_analysis.get('watermark'):
+            llm_watermark = llm_analysis.get('watermark', '').strip()
+            if llm_watermark and llm_watermark.lower() not in ['unknown', 'none', '']:
+                # Use LLM watermark directly - it already includes location and context
+                return llm_watermark
+        
+        # FALLBACK: Use old location-based method
         location = metadata.get('location_formatted', '')
         landmark_name: Optional[str] = None
         if self.include_landmark:

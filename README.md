@@ -3,7 +3,8 @@
 A complete photo processing pipeline that transforms Apple Photos exports into artistic variations using FLUX LoRA models, adds intelligent watermarks, and deploys to AWS S3. Built for batch processing large photo collections with multiple artistic styles.
 
 **Pipeline Flow:**
-```
+
+```text
 Apple Photos → Metadata Extract → Preprocess → LoRA Artistic Filters → Watermarking → AWS S3
 ```
 
@@ -175,46 +176,54 @@ Edit `config/pipeline_config.json`:
 ## 📊 Pipeline Stages
 
 ### Stage 0: Cleanup
+
 - Archive old outputs to timestamped zip files
 - Prepare directories for new export
 - **Output:** `{lib_root}/archive/pipeline_YYYYMMDD_HHMMSS.zip`
 
 ### Stage 1: Export
+
 - AppleScript exports from Apple Photos
 - Preserves album structure
 - **Output:** `{lib_root}/albums/[AlbumName]/[images]`
 
 ### Stage 2: Metadata Extraction
+
 - Extract 30+ EXIF fields (GPS, date, camera, lens, exposure)
 - Reverse geocoding via Nominatim
 - Cache results to avoid rate limits
 - **Output:** `{lib_root}/metadata/master.json`
 
 ### Stage 3: Geocode Sweep
+
 - Enhanced POI identification (Photon → Google Maps → Nominatim)
 - AI watermark generation via Ollama LLM
 - Nearby landmark enrichment
 - **Updates:** `master.json` with `watermark_text`, `location`, `landmarks`
 
 ### Stage 4: Preprocessing
+
 - Resize to 1024x1024 for LoRA input
 - Convert to WebP format
 - Optimize quality
 - **Output:** `{lib_root}/pipeline/preprocessed/[AlbumName]/[images].webp`
 
 ### Stage 5: LoRA Processing
+
 - Apply artistic style filters (FLUX.1-Kontext-dev)
 - Process multiple LoRA styles per image
 - MPS (Apple Silicon) or CUDA acceleration
 - **Output:** `{lib_root}/pipeline/lora_processed/[AlbumName]/[Style]/[images]_[Style]_[timestamp].webp`
 
 ### Stage 6: Post-LoRA Watermarking
+
 - Apply AI-generated watermarks from Ollama
 - Embed copyright metadata in EXIF
 - Preserve album structure
 - **Output:** `{lib_root}/pipeline/watermarked_final/[AlbumName]/[Style]/[images].webp`
 
 ### Stage 7: S3 Deployment
+
 - Upload to AWS S3 with public ACL
 - Set cache headers (max-age=31536000)
 - Content-Type: image/webp
@@ -244,6 +253,7 @@ python core/lora_transformer.py --list-loras
 ### Registry Configuration
 
 Each LoRA in `config/lora_registry.json` includes:
+
 - Description and artistic style notes
 - Custom prompts and negative prompts
 - LoRA strength (0.6-0.9) and text encoder scale (0.4-0.7)
@@ -256,12 +266,14 @@ Each LoRA in `config/lora_registry.json` includes:
 ### How It Works
 
 1. **Geocode Sweep Stage** calls Ollama LLM with metadata:
+
    - Location name and POI (e.g., "Pür & Simple, Kelowna")
    - Nearby landmarks from POI enrichment
    - Date taken and year
    - Camera model
 
 2. **Ollama generates creative text**:
+
    - Examples: "Singapore Delights • January 2023", "Downtown Victoria • 2024"
    - Stored in `master.json` as `watermark_text`
 
@@ -316,12 +328,14 @@ pip install boto3  # For S3 deployment
 ### Stage Architecture Principles
 
 **Immutability Rules:**
+
 - Each stage has clearly defined input/output directories
 - No stage may modify files outside its scope
 - Stage interfaces (schema, filenames) are immutable once validated
 - Downstream code adapts to upstream contracts, never vice versa
 
 **Change Control:**
+
 - Modifications to stable stages require documented rationale
 - All changes logged in `CHANGELOG.md`
 - Reproducibility tests required before merging
@@ -333,20 +347,25 @@ pip install boto3  # For S3 deployment
 Location: `{lib_root}/metadata/master.json`
 
 Structure:
+
 ```json
 {
   "/path/to/original/IMG_1234.jpg": {
     "file_name": "IMG_1234.jpg",
     "file_path": "/path/to/original/IMG_1234.jpg",
-    "exif": { "date_taken": "2025-11-01T14:30:45", /* 30+ fields */ },
+    "exif": { "date_taken": "2025-11-01T14:30:45" /* 30+ fields */ },
     "gps": { "lat": 39.7392, "lon": -104.9903 },
     "location": { "city": "Denver", "state": "Colorado" },
     "location_formatted": "Denver, CO",
     "watermark_text": "Denver Delights • November 2025",
-    "landmarks": [/* nearby POIs */],
+    "landmarks": [
+      /* nearby POIs */
+    ],
     "pipeline": {
       "stages": ["metadata_extraction", "geocode_sweep"],
-      "timestamps": {/* stage completion times */}
+      "timestamps": {
+        /* stage completion times */
+      }
     }
   }
 }
@@ -369,16 +388,19 @@ S3 Path:      s3://skicyclerun.lib/albums/VacationAlbum/IMG_1234_Afremov_2025110
 ### Common Tasks
 
 **List LoRA styles:**
+
 ```bash
 python core/lora_transformer.py --list-loras
 ```
 
 **Process single image:**
+
 ```bash
 python core/lora_transformer.py --lora Anime --file photo.jpg
 ```
 
 **Batch process album:**
+
 ```bash
 python core/lora_transformer.py --lora Impressionism --batch \
   --input-folder ./data/preprocessed/VacationPhotos \

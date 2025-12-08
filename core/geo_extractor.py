@@ -263,6 +263,7 @@ class GeoExtractor:
             'country_code': props.get('countrycode', '').upper() if props.get('countrycode') else None,
             'display_name': props.get('name', '') or f"{props.get('street', '')}, {props.get('city', '')}",
             'name': props.get('name'),  # POI name if available
+            'road': props.get('street'),  # Street/road name
             'lat': lat,
             'lon': lon,
             'osm_type': props.get('osm_type'),
@@ -300,18 +301,25 @@ class GeoExtractor:
                 namedetails = data.get('namedetails') or {}
                 extratags = data.get('extratags') or {}
                 
+                # Check if this is a POI (has a name and is not just a street/area)
+                osm_type = data.get('type', '')
+                has_name = bool(namedetails.get('name'))
+                is_poi = has_name and osm_type not in ['residential', 'road', 'path', 'track', 'footway', 'cycleway', 'tertiary', 'secondary', 'primary']
+                
                 return {
                     'city': address.get('city') or address.get('town') or address.get('village') or address.get('hamlet') or address.get('suburb'),
                     'state': address.get('state'),
                     'country': address.get('country'),
                     'country_code': address.get('country_code'),
                     'display_name': data.get('display_name'),
+                    'road': address.get('road') or address.get('pedestrian') or address.get('footway'),
                     'lat': lat,
                     'lon': lon,
                     'osm_type': data.get('osm_type'),
                     'osm_id': data.get('osm_id'),
                     'category': data.get('category'),
                     'type': data.get('type'),
+                    'poi_found': is_poi,
                     'provider': 'nominatim',
                     'namedetails': namedetails,
                     'extratags': {k: extratags.get(k) for k in ['wikidata','wikipedia','brand','operator'] if k in extratags}
@@ -418,16 +426,24 @@ class GeoExtractor:
         """
         if not self.poi_enabled:
             return []
-        # Build Overpass QL query
+        # Build Overpass QL query - includes tourist POIs plus nearby amenities (bars, restaurants, nightclubs)
+        # Query BOTH nodes AND ways to capture buildings/areas (many venues are polygons not points)
         radius = self.poi_radius_m
         query = f"""
 [out:json][timeout:{self.poi_timeout_s}];
 (
   node(around:{radius},{lat},{lon})["tourism"~"^(attraction|museum|viewpoint)$"]["name"]; 
+  way(around:{radius},{lat},{lon})["tourism"~"^(attraction|museum|viewpoint)$"]["name"];
   node(around:{radius},{lat},{lon})["historic"]["name"]; 
-  node(around:{radius},{lat},{lon})["natural"]["name"]; 
+  way(around:{radius},{lat},{lon})["historic"]["name"];
+  node(around:{radius},{lat},{lon})["natural"]["name"];
+  way(around:{radius},{lat},{lon})["natural"]["name"];
+  node(around:{radius},{lat},{lon})["amenity"~"^(bar|pub|restaurant|cafe|nightclub|theatre)$"]["name"];
+  way(around:{radius},{lat},{lon})["amenity"~"^(bar|pub|restaurant|cafe|nightclub|theatre)$"]["name"];
+  node(around:{radius},{lat},{lon})["leisure"]["name"];
+  way(around:{radius},{lat},{lon})["leisure"]["name"];
 );
-out body {self.poi_max_results};
+out center body 50;
 """
         try:
             r = requests.post(self.overpass_url, data={'data': query}, headers={'User-Agent': self.user_agent}, timeout=self.poi_timeout_s)
@@ -441,11 +457,24 @@ out body {self.poi_max_results};
                 name = tags.get('name')
                 if not name:
                     continue
-                plat = el.get('lat')
-                plon = el.get('lon')
+                
+                # Get coordinates - ways have 'center' property, nodes have lat/lon directly
+                if el.get('type') == 'way' and 'center' in el:
+                    plat = el['center']['lat']
+                    plon = el['center']['lon']
+                elif el.get('type') == 'node':
+                    plat = el.get('lat')
+                    plon = el.get('lon')
+                else:
+                    continue  # Skip if no coordinates available
+                
+                if plat is None or plon is None:
+                    continue
+                
                 # Compute rough distance and bearing
                 d, b = self._distance_and_bearing(lat, lon, plat, plon)
-                cat = tags.get('tourism') or ('historic' if 'historic' in tags else tags.get('natural'))
+                cat = tags.get('tourism') or tags.get('amenity') or tags.get('leisure') or \
+                      ('historic' if 'historic' in tags else tags.get('natural'))
                 if cat:
                     cat = str(cat).lower()
                 raw.append({
@@ -656,10 +685,14 @@ out body {self.poi_max_results};
             else:
                 return "Unknown Location"
     
-    def extract_comprehensive_exif(self, image_path: str) -> Dict:
+    def extract_minimal_exif(self, image_path: str) -> Dict:
         """
-        Extract comprehensive EXIF metadata from image
-        Returns dictionary with all available EXIF fields
+        Extract ONLY essential EXIF metadata from image
+        Returns minimal dictionary with date_taken ONLY
+        
+        GPS data (altitude, direction) goes in top-level 'gps' node
+        Geocoding results go in top-level 'location' node
+        This keeps EXIF clean - not a dump ground!
         """
         exif_dict = {}
         
@@ -670,72 +703,57 @@ out body {self.poi_max_results};
             if not exif_data:
                 return exif_dict
             
-            # Fields to extract (mapped to standard keys)
-            target_fields = {
-                'DateTime': 'date_time',
-                'DateTimeOriginal': 'date_time_original',
-                'DateTimeDigitized': 'date_time_digitized',
-                'Make': 'camera_make',
-                'Model': 'camera_model',
-                'LensMake': 'lens_make',
-                'LensModel': 'lens_model',
-                'PixelXDimension': 'pixel_x_dimension',
-                'PixelYDimension': 'pixel_y_dimension',
-                'Orientation': 'orientation',
-                'XResolution': 'x_resolution',
-                'YResolution': 'y_resolution',
-                'ResolutionUnit': 'resolution_unit',
-                'Software': 'software',
-                'ExposureTime': 'exposure_time',
-                'FNumber': 'f_number',
-                'ISO': 'iso',
-                'ISOSpeedRatings': 'iso_speed_ratings',
-                'FocalLength': 'focal_length',
-                'FocalLengthIn35mmFilm': 'focal_length_35mm',
-                'WhiteBalance': 'white_balance',
-                'Flash': 'flash',
-                'ExposureProgram': 'exposure_program',
-                'MeteringMode': 'metering_mode',
-                'ColorSpace': 'color_space',
-                'DigitalZoomRatio': 'digital_zoom_ratio',
-                'SceneCaptureType': 'scene_capture_type',
-                'SubjectDistanceRange': 'subject_distance_range'
-            }
-            
-            # Extract standard EXIF fields
+            # ONLY extract DateTimeOriginal/Digitized/DateTime for date_taken
+            # GPS fields extracted separately into top-level 'gps' node by extract_metadata()
             for tag, value in exif_data.items():
                 decoded = TAGS.get(tag, tag)
                 
-                if decoded in target_fields:
-                    key = target_fields[decoded]
-                    
-                    # Convert values to JSON-serializable format
-                    if isinstance(value, bytes):
-                        try:
-                            value = value.decode('utf-8', errors='ignore').strip('\x00')
-                        except:
-                            continue  # Skip non-serializable bytes
-                    elif isinstance(value, dict):
-                        continue  # Skip IFD objects (nested dicts)
-                    elif hasattr(value, 'numerator') and hasattr(value, 'denominator'):
-                        # Handle IFDRational objects
-                        try:
-                            value = float(value.numerator) / float(value.denominator) if value.denominator != 0 else float(value.numerator)
-                        except:
-                            continue
-                    elif hasattr(value, '__iter__') and not isinstance(value, str):
-                        # Handle tuples/rationals (e.g., exposure time)
-                        try:
-                            if len(value) == 2:
-                                # Rational number
-                                value = float(value[0]) / float(value[1]) if value[1] != 0 else value[0]
-                        except:
-                            continue  # Skip non-serializable iterables
-                    
-                    exif_dict[key] = value
+                # Extract ONLY date/time fields
+                if decoded == 'DateTimeOriginal':
+                    try:
+                        dt = datetime.strptime(value, "%Y:%m:%d %H:%M:%S")
+                        exif_dict['date_time_original'] = dt.isoformat()
+                    except:
+                        exif_dict['date_time_original'] = value
                 
-                # Extract GPS Info block
-                elif decoded == "GPSInfo":
+                elif decoded == 'DateTimeDigitized':
+                    try:
+                        dt = datetime.strptime(value, "%Y:%m:%d %H:%M:%S")
+                        exif_dict['date_time_digitized'] = dt.isoformat()
+                    except:
+                        exif_dict['date_time_digitized'] = value
+                
+                elif decoded == 'DateTime':
+                    try:
+                        dt = datetime.strptime(value, "%Y:%m:%d %H:%M:%S")
+                        exif_dict['date_time'] = dt.isoformat()
+                    except:
+                        exif_dict['date_time'] = value
+            
+        except Exception as e:
+            print(f"Warning: Could not extract minimal EXIF from {image_path}: {e}")
+        
+        return exif_dict
+    
+    def extract_gps_data(self, image_path: str) -> Dict:
+        """
+        Extract GPS data into dedicated GPS node
+        Returns: {'lat': float, 'lon': float, 'altitude': float, 'heading': float, 'cardinal': str}
+        Separate from EXIF dump - clear node structure!
+        """
+        gps_dict = {}
+        
+        try:
+            image = Image.open(image_path)
+            exif_data = image._getexif()
+            
+            if not exif_data:
+                return gps_dict
+            
+            for tag, value in exif_data.items():
+                decoded = TAGS.get(tag, tag)
+                
+                if decoded == "GPSInfo":
                     gps_info = {}
                     for gps_tag in value:
                         sub_decoded = GPSTAGS.get(gps_tag, gps_tag)
@@ -748,92 +766,118 @@ out body {self.poi_max_results};
                                 continue
                         gps_info[sub_decoded] = gps_val
                     
-                    # Extract specific GPS fields
-                    exif_dict['gps_img_direction'] = self._convert_rational(gps_info.get('GPSImgDirection'))
-                    exif_dict['gps_img_direction_ref'] = gps_info.get('GPSImgDirectionRef')
-                    exif_dict['gps_altitude'] = self._convert_rational(gps_info.get('GPSAltitude'))
-                    exif_dict['gps_altitude_ref'] = gps_info.get('GPSAltitudeRef')
-                    exif_dict['gps_speed'] = self._convert_rational(gps_info.get('GPSSpeed'))
-                    exif_dict['gps_speed_ref'] = gps_info.get('GPSSpeedRef')
-            
-            # Parse date/time fields to ISO format for consistency
-            for date_field in ['date_time', 'date_time_original', 'date_time_digitized']:
-                if date_field in exif_dict:
-                    try:
-                        dt = datetime.strptime(exif_dict[date_field], "%Y:%m:%d %H:%M:%S")
-                        exif_dict[date_field] = dt.isoformat()
-                    except:
-                        # Keep original if parsing fails
-                        pass
-            
-            # Add image dimensions from PIL if not in EXIF
-            if 'pixel_x_dimension' not in exif_dict or 'pixel_y_dimension' not in exif_dict:
-                exif_dict['pixel_x_dimension'] = image.width
-                exif_dict['pixel_y_dimension'] = image.height
+                    # Extract GPS altitude
+                    altitude = self._convert_rational(gps_info.get('GPSAltitude'))
+                    altitude_ref = gps_info.get('GPSAltitudeRef')
+                    if altitude is not None:
+                        gps_dict['altitude'] = altitude if altitude_ref == 0 else -altitude
+                    
+                    # Extract GPS heading/direction
+                    heading = self._convert_rational(gps_info.get('GPSImgDirection'))
+                    if heading is not None:
+                        gps_dict['heading'] = heading
+                        gps_dict['cardinal'] = self._degrees_to_compass(heading)
+                        gps_dict['heading_ref'] = gps_info.get('GPSImgDirectionRef')
+                    
+                    # Extract lat/lon coordinates
+                    coords = self.extract_gps_from_exif(image_path)
+                    if coords:
+                        lat, lon = coords
+                        gps_dict['lat'] = lat
+                        gps_dict['lon'] = lon
             
         except Exception as e:
-            print(f"Warning: Could not extract comprehensive EXIF from {image_path}: {e}")
+            print(f"Warning: Could not extract GPS data from {image_path}: {e}")
         
-        return exif_dict
+        return gps_dict
     
     def extract_metadata(self, image_path: str) -> Dict:
-        """Extract all metadata from image"""
+        """
+        Extract minimal, clean metadata from image
+        
+        Schema:
+        - date_taken: from EXIF DateTimeOriginal (EXIF source)
+        - gps: {lat, lon, altitude, heading, cardinal} (EXIF source)
+        - location: {city, state, country, formatted} (Geocoding result from reverse lookup)
+        
+        Clear separation: EXIF data vs. Geocoding results!
+        """
         metadata = {
             'file_path': str(image_path),
             'file_name': Path(image_path).name,
             'timestamp': utc_now_iso_z(),
             'date_taken': None,
             'date_taken_utc': None,
-            'gps_coordinates': None,
-            'location': None,
-            'location_formatted': "Unknown Location",
-            'heading': None,
-            'exif': {}
+            'gps': None,
+            'location': None
         }
         
-        # Extract comprehensive EXIF data
-        metadata['exif'] = self.extract_comprehensive_exif(image_path)
+        # Extract MINIMAL EXIF data (only DateTimeOriginal)
+        exif_data = self.extract_minimal_exif(image_path)
         
         # Extract primary date_taken from EXIF (prefer DateTimeOriginal)
-        if 'date_time_original' in metadata['exif']:
-            metadata['date_taken'] = metadata['exif']['date_time_original']
-        elif 'date_time_digitized' in metadata['exif']:
-            metadata['date_taken'] = metadata['exif']['date_time_digitized']
-        elif 'date_time' in metadata['exif']:
-            metadata['date_taken'] = metadata['exif']['date_time']
+        if 'date_time_original' in exif_data:
+            metadata['date_taken'] = exif_data['date_time_original']
+        elif 'date_time_digitized' in exif_data:
+            metadata['date_taken'] = exif_data['date_time_digitized']
+        elif 'date_time' in exif_data:
+            metadata['date_taken'] = exif_data['date_time']
         
-        # Extract GPS coordinates and heading from comprehensive EXIF
-        coords = self.extract_gps_from_exif(image_path)
+        # Extract GPS data into dedicated 'gps' node (clear separation!)
+        gps_data = self.extract_gps_data(image_path)
         
-        # Extract heading if available in EXIF
-        if 'gps_img_direction' in metadata['exif'] and metadata['exif']['gps_img_direction'] is not None:
-            metadata['heading'] = {
-                'degrees': metadata['exif']['gps_img_direction'],
-                'cardinal': self._degrees_to_compass(metadata['exif']['gps_img_direction']),
-                'ref': metadata['exif'].get('gps_img_direction_ref')
-            }
-        
-        if coords:
-            lat, lon = coords
-            metadata['gps_coordinates'] = {'lat': lat, 'lon': lon}
+        if gps_data and 'lat' in gps_data and 'lon' in gps_data:
+            metadata['gps'] = gps_data
+            
+            lat, lon = gps_data['lat'], gps_data['lon']
             
             # If we have a local date and GPS, infer UTC capture time
             if metadata.get('date_taken'):
                 inferred = infer_utc_from_local_naive(metadata['date_taken'], lat, lon)
                 if inferred:
                     metadata['date_taken_utc'] = inferred
-                    # Also store in exif dict for consistency
-                    metadata['exif']['date_taken_utc'] = inferred
 
-            # Reverse geocode to get location
+            # Reverse geocode to get location (GEOCODING RESULT - not EXIF!)
             location_info = self.reverse_geocode(lat, lon)
             if location_info:
+                # Add formatted string to location node for clean organization
+                location_info['formatted'] = self.format_location(location_info)
                 metadata['location'] = location_info
-                metadata['location_formatted'] = self.format_location(location_info)
-                # Optional POI enrichment (respect heading for relevance)
-                heading_deg = metadata.get('heading', {}).get('degrees') if metadata.get('heading') else None
-                pois = self.fetch_pois(lat, lon, heading_deg=heading_deg)
-                if pois:
-                    metadata['landmarks'] = pois
+                
+                # POI enrichment: Combine geocoder result + Overpass POIs into single nearby_pois array
+                nearby_pois = []
+                search_metadata = {
+                    'attempted': self.poi_enabled,
+                    'search_radius_m': self.poi_radius_m if self.poi_enabled else None,
+                    'max_distance_m': self.poi_max_distance_m if self.poi_enabled else None,
+                    'heading_filter_used': self.poi_use_heading and gps_data.get('heading') is not None if self.poi_enabled else False,
+                    'error': None
+                }
+                
+                # Add geocoder result as POI at distance 0 (if it found a named place)
+                if location_info.get('name') and location_info.get('type'):
+                    nearby_pois.append({
+                        'name': location_info['name'],
+                        'category': location_info.get('type'),
+                        'distance_m': 0,
+                        'bearing_deg': None,
+                        'bearing_cardinal': None,
+                        'wikidata': None,
+                        'source': 'geocoder'
+                    })
+                
+                # Fetch additional POIs from Overpass API
+                if self.poi_enabled:
+                    try:
+                        heading_deg = gps_data.get('heading')
+                        overpass_pois = self.fetch_pois(lat, lon, heading_deg=heading_deg)
+                        for poi in overpass_pois:
+                            poi['source'] = 'overpass'
+                            nearby_pois.append(poi)
+                    except Exception as e:
+                        search_metadata['error'] = str(e)
+                
+                metadata['nearby_pois'] = nearby_pois
+                metadata['poi_search'] = search_metadata
         
         return metadata

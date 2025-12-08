@@ -7,6 +7,7 @@ import os
 import time
 import subprocess
 import logging
+import importlib
 from pathlib import Path
 from datetime import datetime
 from utils.config_utils import resolve_config_placeholders
@@ -48,6 +49,8 @@ class PipelineRunner:
         sweep_skip_poi: bool = False,
         sweep_skip_heading: bool = False,
         sweep_pulse_sec: int = 5,
+        force_llm_reanalysis: bool = False,
+        force_watermark: bool = False,
     ):
         self.config_path = config_path
         self.config = self._load_config()
@@ -66,6 +69,8 @@ class PipelineRunner:
         self.sweep_skip_poi = sweep_skip_poi
         self.sweep_skip_heading = sweep_skip_heading
         self.sweep_pulse_sec = max(1, int(sweep_pulse_sec))
+        self.force_llm_reanalysis = force_llm_reanalysis
+        self.force_watermark = force_watermark
         
     def _load_config(self) -> Dict:
         """Load pipeline configuration"""
@@ -76,6 +81,51 @@ class PipelineRunner:
     # Legacy catalog removed; MasterStore is authoritative.
 
     # Master catalog rebuild removed; using incremental MasterStore updates instead.
+    
+    def _catalog_exported_files(self):
+        """Catalog exported files in master store after successful export"""
+        if not self.master_store:
+            logWarn("⚠️  MasterStore not configured; skipping export cataloging")
+            return
+        
+        export_path = Path(self.paths.get('apple_photos_export'))
+        if not export_path.exists():
+            logWarn(f"⚠️  Export path does not exist: {export_path}")
+            return
+        
+        image_files = find_images_in_directory(export_path)
+        cataloged = 0
+        
+        for image_path in image_files:
+            image_path_str = str(image_path)
+            
+            # Skip if already cataloged
+            if self.master_store.has_stage(image_path_str, 'export'):
+                continue
+            
+            # Extract album name from folder structure
+            album_name = None
+            try:
+                relative = image_path.relative_to(export_path)
+                if len(relative.parts) > 1:
+                    album_name = relative.parts[0]
+            except ValueError:
+                pass
+            
+            # Create initial entry for exported file
+            patch = {
+                "type": "exported",
+                "file_name": image_path.name,
+                "file_path": image_path_str,
+                "album_name": album_name,
+                "export_timestamp": utc_now_iso_z(),
+            }
+            
+            self.master_store.update_entry(image_path_str, patch, stage='export')
+            cataloged += 1
+        
+        if cataloged > 0:
+            logInfo(f"📝 Cataloged {cataloged} exported files in master store")
     
     def run_export_stage(self):
         """Stage 1: Export photos from Apple Photos"""
@@ -99,25 +149,38 @@ class PipelineRunner:
             if result.returncode == 0:
                 logInfo(f"✅ Export complete")
                 logInfo(result.stdout)
+                
+                # Catalog exported files in master store
+                self._catalog_exported_files()
             else:
                 logError(f"❌ Export failed: {result.stderr}")
                 
         except Exception as e:
             logError(f"❌ Export error: {e}")
     
-    def run_cleanup_stage(self, stages_to_run: List[str] = None):
-        """Stage 0: Archive old work before new export (prevents duplicates)"""
+    def run_cleanup_stage(self, stages_to_run: List[str] = None, force_clean: bool = False):
+        """Stage 0: Archive old work before new export (prevents duplicates)
+        
+        Args:
+            stages_to_run: List of stages being executed
+            force_clean: If True, always clean folders after archiving (overrides will_export logic)
+        """
         if not self.config.get('cleanup', {}).get('enabled', False):
             logInfo("⏭️  Cleanup stage disabled, skipping...")
             return
         
-        # Check if export stage is in the run list - only archive albums if we're doing a new export
+        # Check if export stage is in the run list - only clean if we're doing a new export
+        # unless force_clean is explicitly set
         will_export = 'export' in (stages_to_run or [])
+        should_clean = will_export or force_clean
         
-        if will_export:
-            logInfo("🧹 Stage 0: Archiving old work before new export")
+        if should_clean:
+            if force_clean:
+                logInfo("🧹 Stage 0: Force clean - archiving and removing all old work")
+            else:
+                logInfo("🧹 Stage 0: Archiving old work before new export")
         else:
-            logInfo("🧹 Stage 0: Selective cleanup (keeping existing albums)")
+            logInfo("🧹 Stage 0: Archive only (keeping existing albums)")
         
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         
@@ -167,28 +230,33 @@ class PipelineRunner:
                     zip_size_mb = (archive_zip.with_suffix('.zip').stat().st_size) / (1024 * 1024)
                     logInfo(f"✅ Compressed archive created: {archive_name}.zip ({zip_size_mb:.1f} MB)")
                     
-                    # Only remove folders if we're doing a new export
-                    if will_export:
+                    # Remove folders if cleaning is requested
+                    if should_clean:
                         for folder_name, source_path in items_to_archive:
                             shutil.rmtree(source_path)
                             source_path.mkdir(parents=True, exist_ok=True)
-                            logInfo(f"  ✓ Cleaned {folder_name}/ (will be replaced with new export)")
+                            logInfo(f"  ✓ Cleaned {folder_name}/ (ready for new data)")
                     else:
-                        logInfo(f"  ℹ️  Folders preserved (no export stage - keeping existing data)")
+                        logInfo(f"  ℹ️  Folders preserved (archive-only mode)")
             else:
                 logInfo("ℹ️  No content to archive (folders empty or don't exist)")
         
         logInfo("✅ Archive/cleanup complete - ready for new export")
     
     def run_metadata_extraction_stage(self):
-        """Stage 3: Extract metadata and geolocation"""
+        """Stage 2: Extract metadata and geolocation"""
         if not self.config.get('metadata_extraction', {}).get('enabled', False):
             logInfo("⏭️  Metadata extraction disabled, skipping...")
             return
         
-        logInfo("🗺️  Stage 3: Extracting metadata and geolocation")
+        logInfo("🗺️  Stage 2: Extracting metadata and geolocation")
         
         # Legacy catalog retired; skipping reads.
+        
+        # Force reload geo_extractor module to pick up any code changes
+        import core.geo_extractor
+        importlib.reload(core.geo_extractor)
+        from core.geo_extractor import GeoExtractor
         
         geo_extractor = GeoExtractor(self.config)
         raw_input_path = Path(self.paths.get('raw_input'))
@@ -208,28 +276,35 @@ class PipelineRunner:
         for idx, image_path in enumerate(image_files, 1):
             image_path_str = str(image_path)
             
-            # Skip if master_store already recorded metadata_extraction for this raw path
-            if self.master_store and self.master_store.has_stage(image_path_str, 'metadata_extraction'):
+            # ALWAYS re-process when metadata_extraction stage is explicitly run
+            # This ensures schema updates and new POI data are applied via upsert
+            # Only skip if using sweep filter and image doesn't match
+            if self.sweep_path_contains and self.sweep_path_contains not in image_path_str:
                 skipped_count += 1
                 continue
             
             try:
                 metadata = geo_extractor.extract_metadata(image_path_str)
-                # In-memory legacy tracking removed; write only to master
-                # Write directly to master_store with comprehensive EXIF data
+                # Write clean, organized metadata to master_store
+                # Schema: date_taken (EXIF), gps node (EXIF), location node (Geocoding), nearby_pois (POI enrichment), poi_search (search metadata)
                 if self.master_store:
+                    # Get existing entry to clean up old fields
+                    entry = self.master_store.get(image_path_str)
+                    
+                    # Remove old deprecated fields
+                    if entry and "landmarks" in entry:
+                        del entry["landmarks"]
+                    
+                    # Build complete replacement patch (not merge)
                     patch = {
-                        "exif": metadata.get("exif", {}),  # Comprehensive EXIF data
                         "date_taken": metadata.get("date_taken"),
                         "date_taken_utc": metadata.get("date_taken_utc"),
-                        "gps": metadata.get("gps_coordinates"),
-                        "gps_coordinates": metadata.get("gps_coordinates"),  # Also store as gps_coordinates
-                        "location": metadata.get("location"),
-                        "location_formatted": metadata.get("location_formatted"),
-                        "landmarks": metadata.get("landmarks"),
-                        "heading": metadata.get("heading"),
-                        "extracted_timestamp": metadata.get("timestamp"),
+                        "gps": metadata.get("gps"),  # Clean GPS node: {lat, lon, altitude, heading, cardinal}
+                        "location": metadata.get("location"),  # Geocoding result with formatted string
+                        "nearby_pois": metadata.get("nearby_pois"),  # POI array (geocoder + overpass)
+                        "poi_search": metadata.get("poi_search"),  # Search metadata
                     }
+                    
                     self.master_store.update_entry(image_path_str, patch, stage='metadata_extraction')
                 new_count += 1
                 
@@ -289,11 +364,12 @@ class PipelineRunner:
                 if 'metadata_extraction' in entry.get('pipeline', {}).get('stages', []):
                     # Provide date/location fields under raw path key
                     raw_path = fp
+                    location = entry.get('location', {})
                     existing_catalog[raw_path] = {
-                        'date_taken': entry.get('exif', {}).get('date_taken'),
-                        'date_taken_utc': entry.get('exif', {}).get('date_taken_utc'),
-                        'location_formatted': entry.get('location_formatted'),
-                        'location': entry.get('location'),
+                        'date_taken': entry.get('date_taken'),
+                        'date_taken_utc': entry.get('date_taken_utc'),
+                        'location_formatted': location.get('formatted', 'Unknown'),
+                        'location': location,
                     }
         
         # Preprocess all images
@@ -326,13 +402,13 @@ class PipelineRunner:
                     "type": "preprocessed",
                     "preprocessing": section,
                 }
-                # Carry through helpful top-level fields if present
-                if meta.get('location_formatted'):
-                    patch['location_formatted'] = meta.get('location_formatted')
+                # Carry through metadata from source if present
+                if meta.get('location'):
+                    patch['location'] = meta.get('location')
                 if meta.get('date_taken'):
-                    patch.setdefault('exif', {})['date_taken'] = meta.get('date_taken')
+                    patch['date_taken'] = meta.get('date_taken')
                 if meta.get('date_taken_utc'):
-                    patch.setdefault('exif', {})['date_taken_utc'] = meta.get('date_taken_utc')
+                    patch['date_taken_utc'] = meta.get('date_taken_utc')
                 # Store preprocessed output under source entry as derivative
                 self.master_store.update_entry(out_path, patch, stage='preprocessing', source_path=source_image_path)
         
@@ -396,14 +472,16 @@ class PipelineRunner:
                 # Fetch metadata from master store; fallback to source entry if needed
                 entry = self.master_store.get(image_path_str)
                 src_entry = None
-                if entry and not entry.get('location_formatted') and entry.get('source_path'):
+                e_location = (entry or {}).get('location', {})
+                if entry and not e_location.get('formatted') and entry.get('source_path'):
                     src_entry = self.master_store.get(entry.get('source_path'))
                 e = entry or {}
                 s = src_entry or {}
+                s_location = s.get('location', {})
                 meta_for_wm = {
-                    'location_formatted': e.get('location_formatted') or s.get('location_formatted'),
-                    'date_taken_utc': (e.get('exif') or {}).get('date_taken_utc') or (s.get('exif') or {}).get('date_taken_utc'),
-                    'date_taken': (e.get('exif') or {}).get('date_taken') or (s.get('exif') or {}).get('date_taken'),
+                    'location_formatted': e_location.get('formatted') or s_location.get('formatted'),
+                    'date_taken_utc': e.get('date_taken_utc') or s.get('date_taken_utc'),
+                    'date_taken': e.get('date_taken') or s.get('date_taken'),
                     'landmarks': e.get('landmarks') or s.get('landmarks')
                 }
                 new_filename_stem = FilenameGenerator.generate_from_metadata(meta_for_wm, image_path.stem)
@@ -473,22 +551,16 @@ class PipelineRunner:
         
         logInfo(f"✅ Watermarking complete - {watermarked_count} images processed")
 
-    def run_geocode_sweep_stage(self):
-        """Stage: Sweep master.json and fill missing locations for entries with GPS.
+    def run_llm_image_analysis_stage(self):
+        """Stage: Generate AI-powered image analysis using vision LLM.
 
-        Forces network geocoding (ignores cache_only) and propagates location
-        to derived entries that reference a source via source_path.
-        Also enriches EXIF heading and nearby POI landmarks when enabled.
+        Analyzes images with ministral-3:8b vision model using nearby POI context
+        to generate structured descriptions, primary subjects, and watermark text.
         """
-        logInfo("🌍 Geocode Sweep: Filling missing locations from GPS")
+        logInfo("🤖 LLM Image Analysis: Generating AI descriptions with vision model")
         if not self.master_store:
-            logWarn("⚠️  MasterStore not configured; cannot run geocode sweep.")
+            logWarn("⚠️  MasterStore not configured; cannot run LLM analysis.")
             return
-
-        # Prepare a GeoExtractor with cache_only disabled
-        sweep_config = json.loads(json.dumps(self.config))
-        sweep_config.setdefault('metadata_extraction', {}).setdefault('geocoding', {})['cache_only'] = False
-        extractor = GeoExtractor(sweep_config)
 
         data = self.master_store.list_paths()
         # Build reverse index of children by source_path
@@ -500,13 +572,13 @@ class PipelineRunner:
 
         updated = 0
         skipped = 0
-        no_gps = 0
+        no_image = 0
 
         processed = 0
         # Count only originals (entries without source_path)
         total = sum(1 for e in data.values() if not e.get('source_path'))
         last_pulse = time.time()
-        logInfo(f"🔎 Sweep settings — poi_enabled: {getattr(extractor,'poi_enabled', False)}, only_missing: {self.sweep_only_missing}, path_filter: {bool(self.sweep_path_contains)}, limit: {self.sweep_limit or 'none'}")
+        logInfo(f"🔎 Analysis settings — path_filter: {bool(self.sweep_path_contains)}, limit: {self.sweep_limit or 'none'}")
         logInfo(f"📊 Processing {total} original images (skipping {len(data) - total} derivatives)")
         try:
             for p, e in list(data.items()):
@@ -517,195 +589,106 @@ class PipelineRunner:
                 # Apply path filter if provided
                 if self.sweep_path_contains and self.sweep_path_contains not in p:
                     continue
-                gps = e.get('gps')
-                has_loc = bool(e.get('location_formatted'))
-                if not gps:
-                    no_gps += 1
-                    logWarn(f"⚠️  No GPS data: {Path(p).name}")
+                
+                # Check if image file exists
+                if not Path(p).exists():
+                    no_image += 1
+                    logWarn(f"⚠️  Image file not found: {Path(p).name}")
                     continue
-                # We still may enrich heading/POIs even if location already present
-                lat = gps.get('lat')
-                lon = gps.get('lon')
-                if lat is None or lon is None:
-                    no_gps += 1
-                    logWarn(f"⚠️  Invalid GPS coordinates: {Path(p).name} (lat={lat}, lon={lon})")
-                    continue
+                    
                 try:
                     patch = {}
-                    # Only-missing shortcut: if nothing missing and flag set, skip
-                    if self.sweep_only_missing and all([
-                        has_loc,
-                        bool(e.get('heading')) or self.sweep_skip_heading,
-                        bool(e.get('landmarks')) or self.sweep_skip_poi
-                    ]):
-                        skipped += 1
-                        continue
 
-                    # Always enhance location with Photon for better POI data
-                    # Even if location exists from Nominatim, Photon provides better POI identification
-                    if not has_loc or not e.get('location', {}).get('poi_found'):
-                        loc = extractor.reverse_geocode(lat, lon)
-                        if loc:
-                            formatted = extractor.format_location(loc)
-                            patch.update({"location": loc, "location_formatted": formatted})
-                            if loc.get('poi_found'):
-                                logInfo(f"  🎯 Enhanced POI: {loc.get('name', 'N/A')} ({loc.get('type', 'N/A')})")
-
-                    # Extract heading from EXIF if missing
-                    heading_block = None
-                    if not self.sweep_skip_heading:
-                        try:
-                            from PIL import Image
-                            from PIL.ExifTags import TAGS, GPSTAGS
-                            import os
-                            if os.path.exists(p):
-                                img = Image.open(p)
-                                exif = img._getexif()
-                                gps_info = {}
-                                if exif:
-                                    for tag, value in exif.items():
-                                        decoded = TAGS.get(tag, tag)
-                                        if decoded == 'GPSInfo':
-                                            for gps_tag in value:
-                                                sub_decoded = GPSTAGS.get(gps_tag, gps_tag)
-                                                gps_info[sub_decoded] = value[gps_tag]
-                                def _convert_rational(val):
-                                    if val is None:
-                                        return None
-                                    try:
-                                        if isinstance(val, tuple) and len(val)==2:
-                                            num, den = val
-                                            den = den or 1
-                                            return float(num)/float(den)
-                                        return float(val)
-                                    except Exception:
-                                        return None
-                                def _deg_to_cardinal(deg):
-                                    if deg is None:
-                                        return None
-                                    dirs = ["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"]
-                                    idx = int((deg % 360) / 22.5 + 0.5) % 16
-                                    return dirs[idx]
-                                if gps_info and not e.get('heading'):
-                                    hdg = _convert_rational(gps_info.get('GPSImgDirection'))
-                                    if hdg is not None:
-                                        heading_block = {
-                                            'degrees': hdg,
-                                            'cardinal': _deg_to_cardinal(hdg),
-                                            'ref': gps_info.get('GPSImgDirectionRef')
-                                        }
-                                        patch['heading'] = heading_block
-                        except Exception:
-                            pass
-
-                    # Fetch POIs if enabled and missing
-                    if not self.sweep_skip_poi and getattr(extractor, 'poi_enabled', False) and not e.get('landmarks'):
-                        heading_deg = (heading_block or e.get('heading') or {}).get('degrees')
-                        pois = extractor.fetch_pois(lat, lon, heading_deg=heading_deg)
-                        if pois:
-                            patch['landmarks'] = pois
-
-                    # Generate enhanced watermark with Ollama
-                    # Regenerate if: no watermark exists OR no ollama_generation exists (wasn't generated with Ollama)
-                    should_generate = not e.get('enhanced_watermark') or not e.get('ollama_generation')
-                    if should_generate:
-                        ollama_config = self.config.get('ollama', {})
-                        if ollama_config.get('enabled', False):
+                    # Run vision LLM analysis (ALWAYS - this is an upsert operation)
+                    should_analyze = True
+                    if should_analyze:
+                        llm_config = self.config.get('llm_image_analysis', {})
+                        if llm_config.get('enabled', True):
                             try:
-                                from core.ollama_watermark import OllamaWatermarkGenerator
-                                ollama_gen = OllamaWatermarkGenerator(
-                                    endpoint=ollama_config.get('endpoint', 'http://localhost:11434'),
-                                    model=ollama_config.get('model', 'llama3.2:3b')
-                                )
-                                # Merge current entry with patches for complete metadata
-                                temp_metadata = {**e, **patch}
+                                from core.llm_image_analyzer import LLMImageAnalyzer
                                 
-                                # Log input context for Ollama
-                                location_str = temp_metadata.get('location_formatted', 'Unknown')
-                                poi_name = temp_metadata.get('location', {}).get('name')
-                                poi_type = temp_metadata.get('location', {}).get('type')
-                                date_taken = temp_metadata.get('date_taken', '')
-                                logInfo(f"  🤖 Ollama input - Location: {location_str}, POI: {poi_name} (type: {poi_type}), Date: {date_taken}")
-                                
-                                result = ollama_gen.generate_watermark(
-                                    temp_metadata,
-                                    timeout=ollama_config.get('timeout', 10)
+                                analyzer = LLMImageAnalyzer(
+                                    endpoint=llm_config.get('endpoint', 'http://localhost:11434'),
+                                    model=llm_config.get('model', 'ministral-3:8b')
                                 )
                                 
-                                # Store Ollama context and output
-                                ollama_context = {
-                                    'input_location': location_str,
-                                    'input_poi': poi_name,
-                                    'input_poi_type': poi_type,
-                                    'input_date': date_taken,
-                                    'model': ollama_config.get('model', 'llama3.2:3b'),
-                                    'timestamp': utc_now_iso_z()
-                                }
+                                # Extract context from metadata
+                                nearby_pois = e.get('nearby_pois', [])
+                                location = e.get('location', {})
+                                location_formatted = location.get('formatted', 'Unknown Location')
+                                
+                                # Log analysis context
+                                poi_count = len(nearby_pois)
+                                logInfo(f"  🤖 Analyzing: {Path(p).name} | Location: {location_formatted} | POIs: {poi_count}")
+                                
+                                # Run vision LLM analysis
+                                result = analyzer.analyze_image(
+                                    image_path=p,
+                                    nearby_pois=nearby_pois,
+                                    location_formatted=location_formatted,
+                                    timeout=llm_config.get('timeout', 30)
+                                )
                                 
                                 if result:
-                                    # Extract watermark and enhanced data from result dict
-                                    watermark_text = result.get('watermark', '')
-                                    enhanced_data = result.get('enhanced_data')
+                                    # Store analysis in llm_image_analysis node
+                                    patch['llm_image_analysis'] = result
                                     
-                                    patch['watermark_text'] = watermark_text
-                                    patch['ollama_generation'] = {**ollama_context, 'output': watermark_text, 'method': 'llm'}
+                                    watermark = result.get('watermark', '')
+                                    primary = result.get('primary_subject', '')
+                                    analysis_time = result.get('llm_analysis_time', 0)
+                                    logInfo(f"  ✨ Generated: \"{watermark}\" | Subject: {primary} | Time: {analysis_time}s")
                                     
-                                    # Store full enhanced data if available (for EXIF embedding later)
-                                    if enhanced_data:
-                                        patch['ollama_enhanced_data'] = enhanced_data
+                                elif llm_config.get('fallback_on_error', True):
+                                    # Generate fallback without vision
+                                    date_taken = e.get('date_taken', '')
+                                    fallback = analyzer.generate_fallback(
+                                        location_formatted=location_formatted,
+                                        nearby_pois=nearby_pois,
+                                        date_taken=date_taken
+                                    )
+                                    patch['llm_image_analysis'] = fallback
+                                    logInfo(f"  📝 Fallback: \"{fallback.get('watermark', '')}\"")
                                     
-                                    logInfo(f"  ✨ Ollama generated: \"{watermark_text}\"")
-                                elif ollama_config.get('fallback_on_error', True):
-                                    fallback_text = ollama_gen.generate_fallback(temp_metadata)
-                                    patch['watermark_text'] = fallback_text
-                                    patch['ollama_generation'] = {**ollama_context, 'output': fallback_text, 'method': 'fallback'}
-                                    logInfo(f"  📝 Ollama fallback: \"{fallback_text}\"")
-                            except Exception as ollama_err:
-                                logWarn(f"⚠️  Ollama watermark generation failed for {p}: {ollama_err}")
-                                if ollama_config.get('fallback_on_error', True):
-                                    from core.ollama_watermark import OllamaWatermarkGenerator
-                                    ollama_gen = OllamaWatermarkGenerator()
-                                    temp_metadata = {**e, **patch}
-                                    fallback_text = ollama_gen.generate_fallback(temp_metadata)
-                                    patch['watermark_text'] = fallback_text
-                                    patch['ollama_generation'] = {
-                                        'input_location': temp_metadata.get('location_formatted', 'Unknown'),
-                                        'input_poi': temp_metadata.get('location', {}).get('name'),
-                                        'input_poi_type': temp_metadata.get('location', {}).get('type'),
-                                        'input_date': temp_metadata.get('date_taken', ''),
-                                        'output': fallback_text,
-                                        'method': 'error_fallback',
-                                        'error': str(ollama_err),
-                                        'timestamp': utc_now_iso_z()
-                                    }
-                                    logInfo(f"  📝 Ollama error fallback: \"{fallback_text}\"")
+                            except Exception as llm_err:
+                                logWarn(f"⚠️  Vision LLM analysis failed for {Path(p).name}: {llm_err}")
+                                if llm_config.get('fallback_on_error', True):
+                                    from core.llm_image_analyzer import LLMImageAnalyzer
+                                    analyzer = LLMImageAnalyzer()
+                                    location = e.get('location', {})
+                                    fallback = analyzer.generate_fallback(
+                                        location_formatted=location.get('formatted', 'Unknown'),
+                                        nearby_pois=e.get('nearby_pois', []),
+                                        date_taken=e.get('date_taken', '')
+                                    )
+                                    patch['llm_image_analysis'] = fallback
+                                    logInfo(f"  📝 Error fallback: \"{fallback.get('watermark', '')}\"")
 
                     # Write updates if any
                     if patch:
-                        self.master_store.update_entry(p, patch, stage='geocode_sweep')
+                        self.master_store.update_entry(p, patch, stage='llm_image_analysis')
                         # Propagate to children derived from this source
                         for child in children_by_source.get(p, []):
-                            self.master_store.update_entry(child, patch, stage='geocode_sweep')
+                            self.master_store.update_entry(child, patch, stage='llm_image_analysis')
                         updated += 1
-                        if updated % 25 == 0:
-                            logInfo(f"  ✓ Updated {updated} entries with locations/POIs/heading...")
+                        if updated % 10 == 0:
+                            logInfo(f"  ✓ Analyzed {updated} images...")
                     else:
                         skipped += 1
                     processed += 1
                     # Heartbeat pulse
                     now = time.time()
                     if now - last_pulse >= self.sweep_pulse_sec:
-                        logInfo(f"⏳ Sweep progress: {processed}/{total} processed | updated:{updated} skipped:{skipped} no_gps:{no_gps}")
+                        logInfo(f"⏳ Analysis progress: {processed}/{total} processed | updated:{updated} skipped:{skipped} no_image:{no_image}")
                         last_pulse = now
                     if self.sweep_limit is not None and processed >= self.sweep_limit:
-                        logInfo(f"⏹️  Sweep limit reached: processed {processed} entries")
+                        logInfo(f"⏹️  Analysis limit reached: processed {processed} entries")
                         break
                 except Exception as ex:
-                    logWarn(f"⚠️  Geocode sweep failed for {p}: {ex}")
+                    logWarn(f"⚠️  LLM analysis failed for {p}: {ex}")
         except KeyboardInterrupt:
-            logWarn("🛑 Geocode sweep interrupted by user (Ctrl+C). Partial updates saved.")
+            logWarn("🛑 LLM analysis interrupted by user (Ctrl+C). Partial updates saved.")
 
-        logInfo(f"✅ Geocode sweep complete — updated: {updated}, skipped: {skipped}, no GPS: {no_gps}")
+        logInfo(f"✅ LLM analysis complete — updated: {updated}, skipped: {skipped}, no image: {no_image}")
     
     def run_lora_processing_stage(self):
         """Stage 6: Apply LoRA style filters"""
@@ -787,42 +770,194 @@ class PipelineRunner:
         logInfo(f"✅ LoRA processing complete - {len(loras_to_process)} styles processed")
     
     def run_post_lora_watermarking_stage(self):
-        """Stage 7: Apply watermarks to LoRA-processed images"""
+        """Stage 7: Apply watermarks to LoRA-processed images (catalog-driven)"""
         logInfo("💧 Stage 7: Watermarking LoRA-processed images")
         
-        # Use resolved paths from self.paths (already processed by resolve_config_placeholders)
-        lora_output = str(Path(self.paths.get('lora_processed')))
-        watermark_output = str(Path(self.paths.get('watermarked_final')))
-        if not watermark_output:
+        from core.watermark_generator import WatermarkGenerator
+        from core.watermark_applicator import WatermarkApplicator
+        from core.copyright_embedder import CopyrightEmbedder
+        
+        # Use resolved paths
+        lora_folder = Path(self.paths.get('lora_processed'))
+        output_folder = Path(self.paths.get('watermarked_final'))
+        
+        if not output_folder:
             logWarn("⚠️  No final albums directory configured (paths.final_albums)")
             return
         
-        # Show relative paths for cleaner output
+        if not lora_folder.exists():
+            logError(f"❌ LoRA input folder not found: {lora_folder}")
+            return
+        
+        # Show relative paths
         lib_root = self.paths.get('lib_root')
-        input_rel = lora_output.replace(lib_root + '/', '') if lib_root else lora_output
-        output_rel = watermark_output.replace(lib_root + '/', '') if lib_root else watermark_output
+        input_rel = str(lora_folder).replace(lib_root + '/', '') if lib_root else str(lora_folder)
+        output_rel = str(output_folder).replace(lib_root + '/', '') if lib_root else str(output_folder)
         
         logInfo(f"📁 Input: {input_rel}")
         logInfo(f"📂 Output: {output_rel}")
         
-        # Call postprocess_lora.py
-        import sys
-        import subprocess
+        # Initialize watermark tools
+        watermark_config = self.config.get('watermark', {}).copy()
+        watermark_config['enabled'] = True
+        temp_config = self.config.copy()
+        temp_config['watermark'] = watermark_config
         
-        cmd = [
-            sys.executable,
-            'utils/postprocess_lora.py',
-            '--input', lora_output,
-            '--output', watermark_output,
-            '--force'  # Always re-watermark when running from pipeline
-        ]
+        watermark_gen = WatermarkGenerator(temp_config)
+        watermark_app = WatermarkApplicator(temp_config)
         
-        try:
-            # Don't capture output - let it stream to console for progress feedback
-            result = subprocess.run(cmd, check=True)
-            logInfo("\n✅ Post-LoRA watermarking complete")
-        except subprocess.CalledProcessError as e:
-            logError(f"\n❌ Post-LoRA watermarking failed: {e}")
+        copyright_enabled = self.config.get('copyright', {}).get('enabled', False)
+        copyright_embedder = CopyrightEmbedder(temp_config) if copyright_enabled else None
+        
+        # Sweep master catalog - look for entries with watermarked_outputs (LoRA processed)
+        processed = 0
+        watermarked = 0
+        skipped = 0
+        failed = 0
+        
+        for path_str, entry in self.master_store.list_paths().items():
+            # Check if entry has LoRA outputs
+            watermarked_outputs = entry.get('watermarked_outputs', {})
+            if not watermarked_outputs:
+                continue
+            
+            # Process each LoRA style output
+            for style_name, style_data in watermarked_outputs.items():
+                # Get the LoRA input file (not the output watermarked file)
+                watermark_info = style_data.get('watermark', {})
+                lora_path_str = watermark_info.get('input_path') or style_data.get('path')
+                
+                if not lora_path_str:
+                    continue
+                
+                lora_path = Path(lora_path_str)
+                if not lora_path.exists():
+                    continue
+                
+                # Check if already watermarked (skip unless force flag set)
+                watermark_info = style_data.get('watermark', {})
+                already_watermarked = watermark_info.get('applied_at') is not None
+                
+                if already_watermarked and not self.force_watermark:
+                    skipped += 1
+                    continue
+                
+                processed += 1
+                
+                # Use source entry metadata
+                source_metadata = {
+                    'location_formatted': entry.get('location_formatted'),
+                    'location': entry.get('location'),
+                    'date_taken_utc': entry.get('date_taken_utc'),
+                    'date_taken': entry.get('date_taken'),
+                    'llm_image_analysis': entry.get('llm_image_analysis'),
+                    'landmarks': entry.get('landmarks')
+                }
+                
+                # Create output path
+                album_name = lora_path.parent.name
+                output_album = output_folder / album_name
+                output_album.mkdir(parents=True, exist_ok=True)
+                output_file = output_album / lora_path.name
+                
+                try:
+                    # Apply watermark
+                    watermark_app.apply_watermark(
+                        str(lora_path),
+                        "",  # Text not used when metadata provided
+                        str(output_file),
+                        metadata=source_metadata
+                    )
+                    
+                    # Embed copyright if enabled
+                    if copyright_embedder:
+                        copyright_embedder.embed_copyright_metadata(
+                            str(output_file),
+                            str(output_file),
+                            source_metadata
+                        )
+                    
+                    # Extract watermark text that was used
+                    llm_analysis = source_metadata.get('llm_image_analysis', {})
+                    wm_text = llm_analysis.get('watermark', '') or source_metadata.get('location_formatted', 'Unknown')
+                    
+                    # Update catalog with watermark info
+                    font_cfg = watermark_config.get('font', {})
+                    watermark_patch = {
+                        'text': wm_text,
+                        'layout': watermark_config.get('layout', 'two_line'),
+                        'font_size': font_cfg.get('size'),
+                        'position': watermark_config.get('position'),
+                        'applied_at': utc_now_iso_z(),
+                        'output_path': str(output_file)
+                    }
+                    
+                    # Update the watermarked_outputs entry for this style
+                    patch = {
+                        f'watermarked_outputs.{style_name}.watermark': watermark_patch
+                    }
+                    
+                    self.master_store.update_entry(path_str, patch, stage='post_lora_watermarking')
+                    watermarked += 1
+                    
+                    if watermarked % 10 == 0:
+                        logInfo(f"  💧 Watermarked {watermarked} images...")
+                        
+                except Exception as e:
+                    logWarn(f"⚠️  Failed to watermark {lora_path.name}: {e}")
+                    failed += 1
+        
+        logInfo(f"\n✅ Watermarking complete!")
+        logInfo(f"   Processed: {processed}")
+        logInfo(f"   Watermarked: {watermarked}")
+        logInfo(f"   Skipped: {skipped} (already done)")
+        logInfo(f"   Failed: {failed}")
+        logInfo(f"   Output: {output_rel}")
+    
+    def _find_source_metadata_for_lora(self, lora_entry: dict, lora_path: Path) -> dict:
+        """Find metadata from original source image for LoRA-processed image"""
+        # Try to extract original filename from LoRA filename
+        # Pattern: {original}_{style}_{timestamp}.webp
+        filename_base = lora_path.stem
+        parts = filename_base.rsplit('_', 2)
+        
+        if len(parts) == 3 and parts[-1].isdigit() and len(parts[-1]) == 8:
+            original_base = parts[0]
+        else:
+            original_base = filename_base
+        
+        # Search for preprocessed or raw source with matching base name
+        preprocessed_folder = Path(self.paths.get('preprocessed'))
+        album_name = lora_path.parent.name
+        
+        # Try preprocessed first
+        for ext in ['.webp', '.jpg', '.jpeg', '.png']:
+            candidate = preprocessed_folder / album_name / f"{original_base}{ext}"
+            entry = self.master_store.get(str(candidate))
+            if entry:
+                return {
+                    'location_formatted': entry.get('location_formatted'),
+                    'location': entry.get('location'),
+                    'date_taken_utc': entry.get('date_taken_utc'),
+                    'date_taken': entry.get('date_taken'),
+                    'llm_image_analysis': entry.get('llm_image_analysis'),
+                    'landmarks': entry.get('landmarks')
+                }
+        
+        # Fallback: search all entries by stem
+        for path_str, entry in self.master_store.list_paths().items():
+            if Path(path_str).stem == original_base:
+                return {
+                    'location_formatted': entry.get('location_formatted'),
+                    'location': entry.get('location'),
+                    'date_taken_utc': entry.get('date_taken_utc'),
+                    'date_taken': entry.get('date_taken'),
+                    'llm_image_analysis': entry.get('llm_image_analysis'),
+                    'landmarks': entry.get('landmarks')
+                }
+        
+        logWarn(f"⚠️  No source metadata found for {lora_path.name}")
+        return {}
     
     def run_s3_deployment_stage(self):
         """Stage 8: Deploy watermarked images to AWS S3"""
@@ -981,7 +1116,7 @@ class PipelineRunner:
         logInfo(f"📋 Stages to run: {', '.join(stages)}")
         
         # Check if Ollama is needed and available
-        ollama_stages = ['geocode_sweep', 'post_lora_watermarking']
+        ollama_stages = ['llm_image_analysis', 'post_lora_watermarking']
         needs_ollama = any(stage in stages for stage in ollama_stages)
         
         if needs_ollama:
@@ -1012,11 +1147,22 @@ class PipelineRunner:
                     logError(f"💡 Please ensure Ollama is running at {endpoint}")
                     return
         
+        # Get force_clean flag from args if available
+        force_clean = getattr(self, '_force_clean', False)
+        
+        # Auto-run cleanup before export if export is requested and cleanup isn't already in stages
+        if 'export' in stages and 'cleanup' not in stages:
+            if self.config.get('cleanup', {}).get('enabled', False):
+                logInfo("\n" + "=" * 80)
+                logInfo(f"▶️  STAGE: CLEANUP (AUTO - BEFORE EXPORT)")
+                logInfo("=" * 80)
+                self.run_cleanup_stage(stages, force_clean=force_clean)
+        
         stage_map = {
             'export': self.run_export_stage,
-            'cleanup': lambda: self.run_cleanup_stage(stages),
+            'cleanup': lambda: self.run_cleanup_stage(stages, force_clean=force_clean),
             'metadata_extraction': self.run_metadata_extraction_stage,
-            'geocode_sweep': self.run_geocode_sweep_stage,
+            'llm_image_analysis': self.run_llm_image_analysis_stage,
             'preprocessing': self.run_preprocessing_stage,
             'watermarking': self.run_watermarking_stage,
             'lora_processing': self.run_lora_processing_stage,
@@ -1037,14 +1183,89 @@ class PipelineRunner:
         logInfo("\n" + "=" * 80)
         logInfo("🎉 Pipeline complete!")
         logInfo("=" * 80)
+        
+        # Suggest next stages based on what was just completed
+        self._suggest_next_stages(stages)
+    
+    def _suggest_next_stages(self, completed_stages: List[str]):
+        """Suggest logical next stages based on what was just completed"""
+        # Define the natural pipeline progression
+        pipeline_sequence = [
+            'cleanup',
+            'export',
+            'metadata_extraction',
+            'llm_image_analysis',
+            'preprocessing',
+            'lora_processing',
+            'post_lora_watermarking',
+            's3_deployment'
+        ]
+        
+        # Find the last completed stage in the sequence
+        last_completed_idx = -1
+        for stage in completed_stages:
+            if stage in pipeline_sequence:
+                idx = pipeline_sequence.index(stage)
+                if idx > last_completed_idx:
+                    last_completed_idx = idx
+        
+        # Suggest next stages
+        if last_completed_idx >= 0 and last_completed_idx < len(pipeline_sequence) - 1:
+            next_stage = pipeline_sequence[last_completed_idx + 1]
+            
+            # Build suggestion message
+            logInfo("\n💡 Suggested next step:")
+            logInfo(f"   python pipeline.py --stages {next_stage}")
+            
+            # Provide context for the next stage
+            stage_descriptions = {
+                'metadata_extraction': '   Extract EXIF metadata and GPS coordinates from exported images',
+                'llm_image_analysis': '   Analyze images with vision LLM to generate descriptions and watermarks',
+                'preprocessing': '   Resize and optimize images for LoRA processing',
+                'lora_processing': '   Apply artistic style filters with FLUX LoRA models',
+                'post_lora_watermarking': '   Add watermarks to LoRA-processed images',
+                's3_deployment': '   Deploy final images to AWS S3'
+            }
+            
+            if next_stage in stage_descriptions:
+                logInfo(f"   ({stage_descriptions[next_stage]})")
+            
+            # Show multi-stage option if there are 2+ remaining stages
+            remaining_stages = pipeline_sequence[last_completed_idx + 1:]
+            if len(remaining_stages) > 1:
+                logInfo(f"\n   Or run remaining stages:")
+                logInfo(f"   python pipeline.py --stages {' '.join(remaining_stages)}")
+        elif last_completed_idx == len(pipeline_sequence) - 1:
+            # All stages complete
+            logInfo("\n✅ All pipeline stages complete!")
+            logInfo("   Your images are fully processed and deployed to S3")
 
-    def check_config(self) -> bool:
-        """Report key path status and ensure required directories exist."""
+    def check_config(self, stages_requested: List[str] = None) -> bool:
+        """Report key path status and ensure required directories exist.
+        
+        Args:
+            stages_requested: Optional list of stages to validate. If provided,
+                            only validates paths needed for those stages.
+        """
+        # Determine if this is export-only validation
+        # Note: export automatically runs cleanup, so export-only needs both export + cleanup paths
+        is_export_only = stages_requested == ['export']
+        is_cleanup_only = stages_requested == ['cleanup']
+        
+        # If export is requested, cleanup runs automatically, so we need to validate cleanup paths too
+        stages_with_implicit = list(stages_requested or [])
+        if stages_requested and 'export' in stages_requested and 'cleanup' not in stages_requested:
+            stages_with_implicit.append('cleanup')
         path_specs: List[Dict] = []
         lib_root = self.paths.get('lib_root')
         huggingface_cache = self.paths.get('huggingface_cache')
+        
+        # Always validate library root
         path_specs.append({"label": "Library root", "path": lib_root, "type": "dir", "optional": False, "create": True})
-        path_specs.append({"label": "HuggingFace cache", "path": huggingface_cache, "type": "dir", "optional": False, "create": True})
+        
+        # HuggingFace cache only needed for LoRA processing
+        needs_hf_cache = not is_export_only and not is_cleanup_only
+        path_specs.append({"label": "HuggingFace cache", "path": huggingface_cache, "type": "dir", "optional": not needs_hf_cache, "create": needs_hf_cache})
 
         # Core pipeline directories
         for label, key in [
@@ -1068,9 +1289,10 @@ class PipelineRunner:
             "ensure_parent": True,
         })
 
-        # Export script should exist already
-        export_script = self.config.get('export', {}).get('script_path')
-        path_specs.append({"label": "Export AppleScript", "path": export_script, "type": "file", "optional": False, "create": False})
+        # Export script validation - required only if export stage is requested
+        if is_export_only or not stages_requested or 'export' in stages_with_implicit:
+            export_script = self.config.get('export', {}).get('script_path')
+            path_specs.append({"label": "Export AppleScript", "path": export_script, "type": "file", "optional": False, "create": False})
 
         # Geocode cache file parent path
         cache_file = self.config.get('metadata_extraction', {}).get('geocoding', {}).get('cache_file')
@@ -1084,13 +1306,15 @@ class PipelineRunner:
                 "ensure_parent": True,
             })
 
-        # LoRA settings
-        lora_cfg = self.config.get('lora_processing', {})
-        path_specs.append({"label": "LoRA input", "path": lora_cfg.get('input_folder'), "type": "dir", "optional": False, "create": True})
-        path_specs.append({"label": "LoRA output", "path": lora_cfg.get('output_folder'), "type": "dir", "optional": False, "create": True})
-        registry_path = lora_cfg.get('registry_path')
-        if registry_path:
-            path_specs.append({"label": "LoRA registry", "path": registry_path, "type": "file", "optional": False, "create": False})
+        # LoRA settings - only validate if LoRA processing stage is requested
+        needs_lora = not is_export_only and not is_cleanup_only and (not stages_requested or 'lora_processing' in stages_with_implicit)
+        if needs_lora:
+            lora_cfg = self.config.get('lora_processing', {})
+            path_specs.append({"label": "LoRA input", "path": lora_cfg.get('input_folder'), "type": "dir", "optional": False, "create": True})
+            path_specs.append({"label": "LoRA output", "path": lora_cfg.get('output_folder'), "type": "dir", "optional": False, "create": True})
+            registry_path = lora_cfg.get('registry_path')
+            if registry_path:
+                path_specs.append({"label": "LoRA registry", "path": registry_path, "type": "file", "optional": False, "create": False})
 
         results = []
         has_errors = False
@@ -1204,13 +1428,23 @@ if __name__ == "__main__":
     parser.add_argument("--sweep-skip-poi", action="store_true", help="Skip POI fetching during sweep")
     parser.add_argument("--sweep-skip-heading", action="store_true", help="Skip EXIF heading extraction during sweep")
     parser.add_argument("--sweep-pulse-sec", type=int, default=5, help="Heartbeat interval in seconds for geocode sweep progress")
+    parser.add_argument("--force-llm-reanalysis", action="store_true", help="Force LLM image analysis to re-run even if data already exists")
+    parser.add_argument("--force-watermark", action="store_true", help="Force post-LoRA watermarking to re-process even if already watermarked")
     parser.add_argument("--verbose", action="store_true", help="Enable verbose output to terminal")
+    parser.add_argument("--force-clean", action="store_true", help="Force cleanup stage to delete folders even without export stage")
     
     args = parser.parse_args()
     
     # Store verbose flag globally for logger to use
     import utils.logger as logger_module
     logger_module.VERBOSE = args.verbose
+    
+    # Setup basic console logging for all operations (including --check-config)
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    console_handler.setFormatter(logging.Formatter('%(message)s'))
+    logging.getLogger().addHandler(console_handler)
+    logging.getLogger().setLevel(logging.INFO)
 
     if not args.check_config:
         missing_envs = []
@@ -1239,12 +1473,25 @@ if __name__ == "__main__":
         sweep_skip_poi=args.sweep_skip_poi,
         sweep_skip_heading=args.sweep_skip_heading,
         sweep_pulse_sec=args.sweep_pulse_sec,
+        force_llm_reanalysis=args.force_llm_reanalysis,
+        force_watermark=args.force_watermark,
     )
+    
+    # Handle comma-separated stages if provided as single argument
+    stages_to_run = args.stages
+    if stages_to_run and len(stages_to_run) == 1 and ',' in stages_to_run[0]:
+        stages_to_run = [s.strip() for s in stages_to_run[0].split(',')]
+    
     if args.check_config:
-        ok = runner.check_config()
+        logInfo("\n🧪 CONFIG CHECK MODE")
+        if stages_to_run:
+            logInfo(f"📋 Validating paths for stages: {', '.join(stages_to_run)}\n")
+        else:
+            logInfo("📋 Validating paths for all stages\n")
+        ok = runner.check_config(stages_requested=stages_to_run)
         sys.exit(0 if ok else 1)
 
-    ok = runner.check_config()
+    ok = runner.check_config(stages_requested=stages_to_run)
     if not ok:
         logError("❌ Pipeline config validation failed. Aborting run.")
         sys.exit(1)
@@ -1259,11 +1506,6 @@ if __name__ == "__main__":
             sys.exit(0)
     else:
         logInfo("✅ Proceeding without confirmation (--yes supplied).")
-
-    # Handle comma-separated stages if provided as single argument
-    stages_to_run = args.stages
-    if stages_to_run and len(stages_to_run) == 1 and ',' in stages_to_run[0]:
-        stages_to_run = [s.strip() for s in stages_to_run[0].split(',')]
 
     # Setup file logging
     log_dir = Path("logs")
