@@ -5,15 +5,16 @@ A complete photo processing pipeline that transforms Apple Photos exports into a
 **Pipeline Flow:**
 
 ```text
-Apple Photos → Metadata Extract → Preprocess → LoRA Artistic Filters → Watermarking → AWS S3
+Apple Photos → Metadata Extract → LLM Analysis → Preprocess → LoRA Artistic Filters → Watermarking → AWS S3
 ```
 
 ---
 
 ## 🎯 Features
 
+- **Dual Interface** - Native macOS UI (`main.py`) or powerful CLI (`pipeline.py`)
 - **Apple Photos Integration** - Direct export from Apple Photos with album preservation
-- **AI-Generated Watermarks** - Ollama LLM creates contextual watermarks from location, POI, and date metadata
+- **6-Stage LLM Image Analysis** - Ollama-powered scene understanding, style detection, and contextual watermark generation
 - **Enhanced Geocoding** - 3-tier system (Photon → Google Maps → Nominatim) for accurate POI identification
 - **Multi-LoRA Processing** - Apply 26+ artistic styles (Afremov, Gorillaz, Origami, PencilDrawing, etc.)
 - **Comprehensive EXIF** - Captures 30+ metadata fields including lens info, GPS heading, and exposure settings
@@ -24,6 +25,62 @@ Apple Photos → Metadata Extract → Preprocess → LoRA Artistic Filters → W
 ---
 
 ## 🚀 Quick Start
+
+### Choose Your Interface
+
+**🖥️ Native macOS UI (Recommended for Interactive Use):**
+
+```bash
+# Launch graphical interface
+python3 main.py
+```
+
+- ✅ Visual stage selection with checkboxes
+- ✅ Real-time output streaming
+- ✅ Live command preview
+- ✅ Start/Stop controls
+- ✅ No command-line memorization needed
+
+**⌨️ Command Line (Recommended for Automation/Scripts):**
+
+```bash
+# Full pipeline automation
+caffeinate -i python3 pipeline.py --yes
+```
+
+---
+
+## 🖥️ Using the UI (main.py)
+
+### 1. Install UI Dependencies
+
+```bash
+pip3 install -r requirements-ui.txt
+```
+
+### 2. Launch Application
+
+```bash
+python3 main.py
+```
+
+### 3. Select Stages & Flags
+
+The UI provides:
+
+- **Pipeline Stages**: Check boxes for stages to run (export, metadata_extraction, llm_image_analysis, etc.)
+- **Command Flags**: Toggle options like `--verbose`, `--debug-prompt`, `--force-llm-reanalysis`
+- **Command Preview**: See the exact command before execution
+- **Output Console**: Watch real-time pipeline progress
+- **Run/Stop Buttons**: Start pipeline or gracefully stop mid-process
+
+### 4. Monitor Progress
+
+All output streams directly to the UI console—no need to check terminal or log files separately.
+
+---
+
+## ⌨️ Using the CLI (pipeline.py)
 
 ### 1. Environment Setup
 
@@ -38,34 +95,34 @@ printenv SKICYCLERUN_LIB_ROOT
 printenv HF_HOME
 ```
 
-### 2. Run Pipeline
+### 2. Run Complete Pipeline
 
 **Full pipeline (all stages):**
 
 ```bash
-caffeinate -i python pipeline.py --yes
+caffeinate -i python3 pipeline.py --yes
 ```
 
-**Individual stages:**
+### 3. Run Individual Stages
 
 ```bash
 # Export from Apple Photos
-python pipeline.py --stages export
+python3 pipeline.py --stages export
 
-# Extract metadata and geocode
-python pipeline.py --stages metadata_extraction geocode_sweep
+# Extract metadata and analyze with LLM
+python3 pipeline.py --stages metadata_extraction llm_image_analysis
 
 # Process with LoRA styles
-python pipeline.py --stages lora_processing
+python3 pipeline.py --stages lora_processing
 
 # Add watermarks
-python pipeline.py --stages post_lora_watermarking
+python3 pipeline.py --stages post_lora_watermarking
 
 # Deploy to S3
-python pipeline.py --stages s3_deployment
+python3 pipeline.py --stages s3_deployment
 ```
 
-### 3. Graceful Shutdown & Resume
+### 4. Graceful Shutdown & Resume
 
 **Stop during long runs:**
 
@@ -77,7 +134,7 @@ touch /tmp/skicyclerun_stop
 **Resume processing:**
 
 ```bash
-caffeinate -i python pipeline.py --stages lora_processing
+caffeinate -i python3 pipeline.py --stages lora_processing
 # Automatically skips already-processed images
 ```
 
@@ -87,12 +144,20 @@ caffeinate -i python pipeline.py --stages lora_processing
 
 ```text
 skicyclerun.i2i/
+├── main.py                     # 🖥️ Native macOS UI entry point
+├── pipeline.py                 # ⌨️ CLI orchestrator (8 stages)
 ├── config/
 │   ├── pipeline_config.json    # Unified pipeline & LoRA configuration
 │   └── lora_registry.json      # 26 LoRA style definitions
-├── core/
-│   ├── lora_transformer.py     # LoRA processing engine (was main.py)
-│   ├── pipeline_loader.py      # FLUX.1-Kontext-dev loader
+├── ui/                         # Native macOS UI components
+│   ├── app.py                  # UI application coordinator
+│   ├── models/                 # Config parsing & command building
+│   ├── controllers/            # Pipeline subprocess execution
+│   └── views/                  # Native Cocoa windows & controls
+├── core/                       # Pipeline processing engines
+│   ├── lora_transformer.py     # LoRA artistic style processing
+│   ├── llm_image_analyzer.py   # 6-stage Ollama image analysis
+│   ├── pipeline_loader.py      # FLUX.1-Kontext-dev model loader
 │   ├── lora_manager.py         # LoRA loading (HuggingFace + local)
 │   ├── image_processor.py      # Preprocessing & resizing
 │   ├── inference_runner.py     # Image-to-image inference
@@ -102,10 +167,14 @@ skicyclerun.i2i/
 │   ├── watermark.py            # Watermark application
 │   ├── cli.py                  # Config loading utilities
 │   └── logger.py               # Structured logging
-├── pipeline.py                 # Main orchestrator (8 stages)
 └── scripts/
     └── osxPhotoExporter.scpt   # AppleScript for Photos export
 ```
+
+**Entry Points:**
+
+- **`main.py`** → Launches native macOS UI with visual controls
+- **`pipeline.py`** → Executes pipeline stages via command line
 
 ---
 
@@ -175,6 +244,8 @@ Edit `config/pipeline_config.json`:
 
 ## 📊 Pipeline Stages
 
+All stages can be run via **UI** (check boxes) or **CLI** (--stages flag).
+
 ### Stage 0: Cleanup
 
 - Archive old outputs to timestamped zip files
@@ -194,12 +265,17 @@ Edit `config/pipeline_config.json`:
 - Cache results to avoid rate limits
 - **Output:** `{lib_root}/metadata/master.json`
 
-### Stage 3: Geocode Sweep
+### Stage 3: LLM Image Analysis
 
-- Enhanced POI identification (Photon → Google Maps → Nominatim)
-- AI watermark generation via Ollama LLM
-- Nearby landmark enrichment
-- **Updates:** `master.json` with `watermark_text`, `location`, `landmarks`
+- **6-stage Ollama-powered analysis:**
+  1. **Scene Understanding** - Objects, setting, composition
+  2. **Style Detection** - Color palette, lighting, artistic qualities
+  3. **Geocoding Enhancement** - POI identification with 3-tier fallback
+  4. **Location Enrichment** - Nearby landmarks and cultural context
+  5. **Watermark Generation** - Creative text based on scene + location
+  6. **Quality Assessment** - Technical evaluation (blur, exposure, etc.)
+- Structured JSON output with confidence scores
+- **Updates:** `master.json` with `watermark_text`, `llm_analysis`, `location`, `landmarks`
 
 ### Stage 4: Preprocessing
 
@@ -261,28 +337,60 @@ Each LoRA in `config/lora_registry.json` includes:
 
 ---
 
-## 🧠 AI Watermark Generation
+## 🧠 LLM Image Analysis (6-Stage Ollama Pipeline)
 
 ### How It Works
 
-1. **Geocode Sweep Stage** calls Ollama LLM with metadata:
+The `llm_image_analysis` stage uses Ollama to perform comprehensive image understanding:
 
-   - Location name and POI (e.g., "Pür & Simple, Kelowna")
-   - Nearby landmarks from POI enrichment
-   - Date taken and year
-   - Camera model
+#### Stage 1: Scene Understanding
 
-2. **Ollama generates creative text**:
+- Analyzes objects, people, setting, and composition
+- Detects activity and context
+- **Output:** Structured scene description
 
-   - Examples: "Singapore Delights • January 2023", "Downtown Victoria • 2024"
-   - Stored in `master.json` as `watermark_text`
+#### Stage 2: Style Detection
 
-3. **Watermarking stage applies text**:
-   - Uses Ollama-generated text if present
-   - Falls back to template: `SkiCycleRun © {year} {astro_symbol} {location}`
-   - Embeds in EXIF copyright field
+- Identifies color palette, lighting, and mood
+- Detects artistic qualities and photographic techniques
+- **Output:** Style attributes with confidence scores
+
+#### Stage 3: Geocoding Enhancement
+
+- 3-tier POI identification:
+  1. **Photon API** (OpenStreetMap-based, fast)
+  2. **Google Maps Places API** (fallback, high accuracy)
+  3. **Nominatim** (final fallback)
+- Uses GPS coordinates from EXIF
+- **Output:** Location name, address, place type
+
+#### Stage 4: Location Enrichment
+
+- Queries nearby landmarks and attractions
+- Adds cultural/historical context
+- **Output:** Array of nearby POIs with distances
+
+#### Stage 5: Watermark Generation
+
+- Creates contextual watermark text combining:
+  - Location name and POI (e.g., "Pür & Simple, Kelowna")
+  - Date taken and year
+  - Creative formatting
+- **Examples:**
+  - "Singapore Delights • January 2023"
+  - "Downtown Victoria • 2024"
+  - "Kelowna Adventures • Summer 2025"
+- **Output:** `watermark_text` stored in `master.json`
+
+#### Stage 6: Quality Assessment
+
+- Technical evaluation (blur, exposure, composition)
+- Identifies potential issues
+- **Output:** Quality metrics and recommendations
 
 ### Configuration
+
+Edit `config/pipeline_config.json`:
 
 ```json
 {
@@ -290,10 +398,28 @@ Each LoRA in `config/lora_registry.json` includes:
     "enabled": true,
     "endpoint": "http://localhost:11434",
     "model": "llama3.2:3b",
-    "timeout": 10,
+    "timeout": 30,
     "fallback_on_error": true
+  },
+  "llm_image_analysis": {
+    "enabled": true,
+    "analyze_existing": false,
+    "batch_size": 10
   }
 }
+```
+
+### CLI Flags
+
+```bash
+# Force re-analysis of already-analyzed images
+python3 pipeline.py --stages llm_image_analysis --force-llm-reanalysis
+
+# Cache-only geocoding (skip network requests)
+python3 pipeline.py --stages llm_image_analysis --cache-only-geocode
+
+# Debug LLM prompts and responses
+python3 pipeline.py --stages llm_image_analysis --debug-prompt --verbose
 ```
 
 ---
@@ -302,12 +428,42 @@ Each LoRA in `config/lora_registry.json` includes:
 
 ### Python 3.13+
 
+**Core Dependencies:**
+
 ```bash
 pip install torch torchvision diffusers transformers accelerate
 pip install Pillow pillow-heif piexif
 pip install geopy requests pytz
 pip install boto3  # For S3 deployment
 ```
+
+**UI Dependencies (for main.py):**
+
+```bash
+pip install -r requirements-ui.txt
+# Installs PyObjC for native macOS UI
+```
+
+### External Services
+
+- **Ollama** - Run locally for LLM image analysis
+
+  ```bash
+  # Install Ollama
+  brew install ollama
+
+  # Start server
+  ollama serve
+
+  # Pull model
+  ollama pull llama3.2:3b
+  ```
+
+- **AWS CLI** - Configure for S3 deployment
+  ```bash
+  aws configure
+  # Enter: AWS Access Key ID, Secret Access Key, Region (us-west-2)
+  ```
 
 ### Hardware
 
@@ -325,7 +481,25 @@ pip install boto3  # For S3 deployment
 
 ## 🧩 Developer Guide
 
-### Stage Architecture Principles
+### Entry Points
+
+**Main UI (main.py):**
+
+- Launches native macOS application using PyObjC
+- Coordinates UI components (models, views, controllers)
+- Executes `pipeline.py` as subprocess
+- Streams output to UI console
+- **Usage:** Interactive pipeline execution with visual feedback
+
+**Pipeline CLI (pipeline.py):**
+
+- Core stage orchestration engine
+- Handles 8 pipeline stages sequentially
+- Loads configuration from `config/pipeline_config.json`
+- Manages graceful shutdown via `/tmp/skicyclerun_stop`
+- **Usage:** Automation, scripting, headless execution
+
+### Architecture Principles
 
 **Immutability Rules:**
 
@@ -387,62 +561,115 @@ S3 Path:      s3://skicyclerun.lib/albums/VacationAlbum/IMG_1234_Afremov_2025110
 
 ### Common Tasks
 
+**Launch UI:**
+
+```bash
+python3 main.py
+# Opens native macOS window with visual controls
+```
+
+**Run complete pipeline (CLI):**
+
+```bash
+caffeinate -i python3 pipeline.py --yes
+```
+
 **List LoRA styles:**
 
 ```bash
-python core/lora_transformer.py --list-loras
+python3 core/lora_transformer.py --list-loras
 ```
 
-**Process single image:**
+**Process single image with LoRA:**
 
 ```bash
-python core/lora_transformer.py --lora Anime --file photo.jpg
+python3 core/lora_transformer.py --lora Anime --file photo.jpg
 ```
 
-**Batch process album:**
+**Batch process album with LoRA:**
 
 ```bash
-python core/lora_transformer.py --lora Impressionism --batch \
+python3 core/lora_transformer.py --lora Impressionism --batch \
   --input-folder ./data/preprocessed/VacationPhotos \
   --output-folder ./data/lora_processed
+```
+
+**Run specific stages (CLI):**
+
+```bash
+# Metadata extraction and LLM analysis only
+python3 pipeline.py --stages metadata_extraction llm_image_analysis
+
+# LoRA processing with verbose output
+python3 pipeline.py --stages lora_processing --verbose
+
+# Force watermark regeneration
+python3 pipeline.py --stages post_lora_watermarking --force-watermark
 ```
 
 ---
 
 ## 🐛 Troubleshooting
 
-### Apple Photos Export Issues
+### UI Issues
+
+**PyObjC import error:**
+
+```bash
+# Install PyObjC dependencies
+pip3 install -r requirements-ui.txt
+
+# Verify installation
+python3 -c "import Cocoa; print('✅ PyObjC installed successfully')"
+```
+
+**UI window not showing:**
+
+- Ensure running on macOS (PyObjC is macOS-only)
+- Check Terminal has accessibility permissions in System Settings
+- Try `python3 main.py --config config/pipeline_config.json`
+
+**Pipeline not starting from UI:**
+
+- Verify `pipeline.py` exists in project root
+- Check `config/pipeline_config.json` is valid JSON
+- Review output console for specific error messages
+
+### CLI/Pipeline Issues
+
+**Apple Photos Export Issues:**
 
 - **Permission denied**: Grant Terminal.app Full Disk Access in System Settings → Privacy & Security
 - **Test export**: `osascript scripts/osxPhotoExporter.scpt /tmp/test_export`
 - **Album not found**: Check album name spelling in Photos app
 
-### LoRA Processing Slow
+**LoRA Processing Slow:**
 
 - **M3 Max timing**: ~11 minutes 46 seconds per image
 - **Graceful stop**: `touch /tmp/skicyclerun_stop` to exit cleanly
 - **Resume**: Re-run same command - skips already-processed images
 - **Check progress**: `tail -f logs/pipeline_YYYYMMDD_HHMMSS.log`
 
-### Watermark Issues
+**LLM Analysis Issues:**
 
-- **Missing metadata**: Check `metadata/master.json` for location data
-- **Location shows "Unknown"**: GPS data missing from EXIF
 - **Ollama not running**: Start with `ollama serve` or disable in config
+- **Model not found**: `ollama pull llama3.2:3b`
+- **Timeout errors**: Increase `ollama.timeout` in config
+- **Debug prompts**: Use `--debug-prompt --verbose` flags
 
-### Geocoding Rate Limits
+**Geocoding Rate Limits:**
 
 - **Nominatim**: 1 request/second (automatically enforced)
 - **Cache location**: `{lib_root}/metadata/geocode_cache.json`
-- **Cache-only dev mode**: Add `--cache-only-geocode` flag to skip network calls
+- **Cache-only mode**: Use `--cache-only-geocode` flag
 
-### S3 Deployment Failures
+**S3 Deployment Failures:**
 
 - **AWS credentials**: Ensure `~/.aws/credentials` configured
 - **Bucket permissions**: Check S3 bucket policy allows PutObject
 - **Test upload**: `aws s3 cp test.webp s3://skicyclerun.lib/albums/test.webp`
 
-### Memory Issues
+**Memory Issues:**
 
 - **FLUX model size**: ~12GB GPU RAM required
 - **Monitor**: Activity Monitor → GPU (Apple Silicon) or `nvidia-smi` (NVIDIA)
@@ -475,13 +702,35 @@ python core/lora_transformer.py --lora Impressionism --batch \
 
 ## 🔗 Quick Reference Commands
 
+**UI:**
+
+```bash
+# Launch native macOS UI
+python3 main.py
+
+# Launch with custom config
+python3 main.py --config path/to/config.json
+```
+
+**CLI:**
+
 ```bash
 # Complete pipeline
-caffeinate -i python pipeline.py --yes
+caffeinate -i python3 pipeline.py --yes
 
 # Resume from specific stage
-python pipeline.py --stages lora_processing post_lora_watermarking s3_deployment
+python3 pipeline.py --stages lora_processing post_lora_watermarking s3_deployment
 
+# Force LLM re-analysis
+python3 pipeline.py --stages llm_image_analysis --force-llm-reanalysis
+
+# Verbose output with debug prompts
+python3 pipeline.py --stages llm_image_analysis --verbose --debug-prompt
+```
+
+**Monitoring:**
+
+```bash
 # Check S3 deployment
 aws s3 ls s3://skicyclerun.lib/albums/ --recursive --human-readable
 
@@ -503,28 +752,34 @@ Built by **Tim Halley** for the SkiCycleRun photo collection - automating the tr
 
 **Tech Stack:**
 
-- FLUX.1-Kontext-dev (Black Forest Labs)
-- PyTorch with MPS backend (Apple Silicon)
-- HuggingFace Diffusers
-- Ollama LLM (llama3.2:3b)
-- AWS S3 + boto3
-- Apple Photos AppleScript integration
+- **UI**: PyObjC (native macOS Cocoa)
+- **Pipeline**: Python 3.13 with modular stage architecture
+- **AI Models**:
+  - FLUX.1-Kontext-dev (Black Forest Labs) for image-to-image
+  - Ollama llama3.2:3b for LLM image analysis
+- **ML Framework**: PyTorch with MPS backend (Apple Silicon)
+- **Libraries**: HuggingFace Diffusers, Pillow, geopy
+- **Cloud**: AWS S3 + boto3
+- **Integration**: Apple Photos AppleScript
 
 **Links:**
 
 - [FLUX Kontext Models](https://huggingface.co/Kontext-Style/models)
 - [Black Forest Labs](https://huggingface.co/black-forest-labs)
 - [Ollama](https://ollama.ai/)
+- [PyObjC Documentation](https://pyobjc.readthedocs.io/)
 
 ---
 
 ## 📝 Related Documentation
 
+- **ui/README.md** - Detailed UI architecture and component documentation
 - **REFACTOR_LORA_TRANSFORMER.md** - Details on main.py → core/lora_transformer.py refactoring
 - **WORKFLOW.md** - Detailed workflow examples
 - **config/lora_registry.json** - Complete LoRA style definitions
 - **config/pipeline_config.json** - Pipeline configuration reference
+- **LLM_IMAGE_ANALYSIS_REFACTOR.md** - 6-stage LLM analysis architecture
 
 ---
 
-**Last Updated:** December 6, 2025
+**Last Updated:** December 20, 2025
