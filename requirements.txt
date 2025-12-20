@@ -1,6 +1,6 @@
 # Core PyTorch and ML libraries
 torch==2.8.0
-torchvision==0.21.0
+torchvision==0.23.0
 torchaudio==2.8.0
 
 # Hugging Face ecosystem
