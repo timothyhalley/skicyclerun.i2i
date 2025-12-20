@@ -1,0 +1,38 @@
+# Core PyTorch and ML libraries
+torch==2.6.0
+torchvision==0.21.0
+torchaudio==2.6.0
+
+# Hugging Face ecosystem
+diffusers==0.35.2
+transformers==4.57.1
+accelerate==1.11.0
+
+# LoRA and model fine-tuning
+peft
+
+# Tokenization and text processing
+sentencepiece
+protobuf
+
+# Model storage and safety
+safetensors
+tokenizers
+
+# Image processing and utilities
+pillow
+numpy
+timezonefinder
+
+# System monitoring and utilities
+psutil
+
+# Optional: Face detection for preprocessing (not available for Python 3.13.2 yet)
+# mediapipe  # Uncomment when available for Python 3.13.2
+
+# Optional performance optimizations (may require compilation)
+# xformers  # Commented out due to compilation issues on some systems
+# bitsandbytes  # Commented out due to compatibility issues
+
+# Development and debugging
+# jupyter  # Uncomment if you want Jupyter notebook support

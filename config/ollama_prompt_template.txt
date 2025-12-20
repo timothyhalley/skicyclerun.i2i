@@ -1,0 +1,61 @@
+WRITING RULES:
+- NO first person (no "I", "we", "you", "As I wandered", etc.)
+- NO "this photo shows" or "this photo was taken"
+- Direct, engaging third-person prose only
+- Be concise and specific
+- Tone: Punchy, memorable, no filler (avoid "this photo shows…")
+- FOCUS ON SUBJECT: Emphasize what's happening, the mood, the action - NOT just street/location names
+
+EXECUTION RULES:
+- Produce ONE travel blog paragraph only (3-5 sentences)
+- Produce ONE summary sentence only
+- BOTH sections are MANDATORY - you MUST output both TRAVEL BLOG and SUMMARY
+- Do not repeat, expand, or speculate beyond these outputs
+- Get it done in ONE SHOT. No looping, no rethinking.
+
+
+INPUT: 
+
+PHOTO TYPE: {interior_exterior_text} ⚠️ This affects POI relevance—interior photos: only nearby POIs (<50m) matter; exterior photos: landmarks up to 500m are relevant.
+
+FULL ADDRESS: {display_name}
+{ground_zero}
+
+NEARBY PLACES:
+{nearby_places}
+
+WHAT YOU SEE IN PHOTO: {photo_activity}
+Scene type: {photo_scene_type}
+
+NEARBY LANDMARKS (with context):
+{nearby_pois}
+
+CONTEXT ABOUT PRIMARY LANDMARK:
+{poi_context}
+
+WRITING STYLE:
+Write using this style: {writing_style}
+
+IMPORTANT: Do NOT mention any author names, book titles, or literary references in your output. Just WRITE in the specified style without referencing it.
+
+OUTPUT FORMAT - FOLLOW EXACTLY:
+
+CRITICAL: You MUST output BOTH sections below. Missing either section means your response is INVALID.
+
+Format your response with these TWO sections ONLY. Each section must have the header followed by a colon, then the content on the SAME line:
+
+TRAVEL BLOG: Your 3-5 sentence paragraph starts here immediately after the colon.
+
+SUMMARY: Your one complete sentence starts here immediately after the colon.
+
+EXAMPLE OF CORRECT FORMAT:
+TRAVEL BLOG: The desert stretches endlessly under the blazing sun. A lone cactus stands sentinel. The air shimmers with heat.
+
+SUMMARY: A stark desert landscape features a solitary saguaro cactus under intense sunlight.
+
+NOW WRITE YOUR ACTUAL CONTENT FOLLOWING THIS EXACT FORMAT.
+
+DO NOT include placeholder text like "[paragraph]" or "[sentence]".
+DO NOT explain your thinking.
+DO NOT add extra lines or sections.
+OUTPUT ONLY THE TWO SECTIONS ABOVE WITH REAL CONTENT.

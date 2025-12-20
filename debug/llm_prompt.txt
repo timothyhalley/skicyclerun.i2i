@@ -1,0 +1,95 @@
+START: Reset context. Do not carry over instructions from previous tasks. 
+RESET CONTEXT: Only use the metadata provided below for this image.
+
+MISSION: You are generating descriptive content based on an image and its metadata. 
+Write in a smooth, factual narrative style. Do not use phrases such as 
+"I am analyzing," "this photo shows," "appears to be," or "analysis." 
+Do not hedge or speculate. Focus on confident, factual description.
+Ground all conclusions in the provided GPS/location data. Do not speculate or reference external sources.
+
+AUTHORITATIVE DATA (must be used exactly):
+- GPS Coordinates: {photo_gps_lat}, {photo_gps_lon}
+- Altitude: {photo_altitude} m
+- Camera Heading: {photo_heading}° {photo_cardinal}
+- Location (must match exactly): {photo_city}, {photo_state}, {photo_country}
+- Road/Address: {photo_road_or_display_name}
+- OSM: type {photo_osm_type}, category {photo_category}, place type {photo_type}
+- Nearby POIs (trusted list): {nearby_pois}
+- Provider: nominatim
+
+GUARDRAILS:
+- Location fidelity: Output location must equal {photo_city}, {photo_state}, {photo_country}. Do not substitute or infer another place.
+- Evidence hierarchy: EXIF/Nominatim > visible text-in-image > general world knowledge.
+- Conflict handling: If visible cues seem inconsistent with the location, note the conflict and uncertainty, but keep the location unchanged.
+- **POI CONTEXT IS CRITICAL**: The nearby_pois field below contains descriptions, dates, heritage status, and historical context. YOU MUST USE THIS INFORMATION in your description and summation. Do not ignore it.
+- **HISTORICAL SIGNIFICANCE**: If a POI has context data (description, built date, heritage, Wikipedia), incorporate ALL of it into your description. Explain when created, by whom, and cultural importance to {photo_city}.
+- POI discipline: Only list POIs provided in {nearby_pois} or those clearly visible and consistent with GPS. Do not invent POIs.
+- Watermark must include: {photo_city}, {photo_country}.
+- No promotional adjectives. No mentions of "photo" or "image". No "taken at".
+- If uncertain, use generic but accurate descriptors and mark uncertainty.
+
+GROUNDING SECTION:
+- Using {photo_gps_lat}, {photo_gps_lon} and the location metadata, summarize factual context about this place (terrain, land use, architectural/landscape types consistent with OSM).
+- Provide a detailed paragraph (6–10 sentences) summarizing these grounded findings.
+- Then list nearby POIs in bullet form. If none are certain, write "None identified."
+
+INPUT SECTION:
+- GPS: {photo_gps_lat}, {photo_gps_lon} at {photo_altitude} m | Heading: {photo_heading}° {photo_cardinal}
+- Location: {photo_city}, {photo_state}, {photo_country}
+- Road/Address: {photo_road_or_display_name}
+- OSM: type {photo_osm_type}, category {photo_category}, place type {photo_type}
+
+**NEARBY POIs WITH CONTEXT (USE THIS DATA):**
+{nearby_pois}
+
+REMINDER: The POI context above contains historical facts you MUST use in your description and summation.
+
+TASKS:
+1) Detailed description: Write 1–2 paragraphs in flowing prose, aligned with the location and OSM context. 
+   **CRITICAL**: Check nearby_pois field for context data (descriptions, dates, heritage info). If present, you MUST incorporate this historical information.
+   If the subject is a historic landmark, use the POI context to explain: who created it, when it was built/unveiled, its cultural significance to {photo_city}, and any unique features mentioned in the context.
+   Mention landscape, architecture, or cultural features confidently and factually.
+
+2) Summation: Condense into 2–3 sentences that clearly state the subject AND its historical significance using POI context data. 
+   If POI context includes dates, designers, or cultural importance, include these facts in your summation.
+   Note uncertainties only if unavoidable, but do not speculate.
+
+3) Watermark summation (≤12 words): Incorporate highlights from the description. 
+   Include kanji characters with [English translation].
+
+4) Watermark location: Format as [subject/landmark], [city + state if USA / province if Canada / country if elsewhere].
+
+
+OUTPUT (valid JSON only, nothing else):
+{{
+  "llm_model": "[model]",
+  "llm_analysis_time": 0.0,
+  "description": "",
+  "grounding": {{
+    "paragraph": "",
+    "nearby_pois": [
+      {{
+        "name": "POI name",
+        "evidence": "visible/provided/consistent",
+        "distance_m": null
+      }}
+    ]
+  }},
+  "summation": "",
+  "watermark_summary": "",
+  "watermark_location": "",
+  "echo": {{
+    "gps": {{ "lat": {{photo_gps_lat}}, "lon": {{photo_gps_lon}} }},
+    "location": {{ "city": "{{photo_city}}", "state": "{{photo_state}}", "country": "{{photo_country}}" }}
+  }},
+  "validation": {{
+    "location_equals_input": true,
+    "no_unprovided_pois": true,
+    "conflict_noted_if_any": false
+  }},
+  "confidence": {{
+    "subject_identification": 0.0,
+    "location_consistency": 1.0,
+    "poi_claims": 0.0
+  }}
+}}

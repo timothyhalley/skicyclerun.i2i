@@ -1,0 +1,299 @@
+{
+  "Paper_Cutting": {
+    "path": "Kontext-Style/Paper_Cutting_lora",
+    "weights": "Paper_Cutting_lora_weights.safetensors",
+    "description": "Paper cutting LoRA emulating layered cutout aesthetics with crisp silhouettes and shadow depth. Prioritizes subject shape fidelity—preserving thin figures, facial structure, and pose integrity. Ideal for stylized transformations with clean, graphic impact.",
+    "prompt": "<Convert this image into paper cutting art style>, crisp silhouette edges, layered cutouts with high contrast, deep shadow interplay, minimalist composition, precision-cut contours, handcrafted texture, pose-preserving geometry, visual clarity",
+    "negative_prompt": "photorealism, blurry edges, bloated proportions, facial distortion, exaggerated anatomy, synthetic texture, 3D rendering, cluttered layout, low contrast, uneven cuts",
+    "lora_scale": 0.75,
+    "text_encoder_scale": 0.5
+  },
+  "Irasutoya": {
+    "path": "Kontext-Style/Irasutoya_lora",
+    "weights": "Irasutoya_lora_weights.safetensors",
+    "description": "Irasutoya illustration style",
+    "prompt": "<Transform into Irasutoya illustration style>, simple rounded shapes, clean vector lines, cheerful color palette, friendly expressions, minimal shading, flat design, playful tone, childlike charm",
+    "negative_prompt": "realistic rendering, dark atmosphere, complex textures, harsh shadows, photographic lighting, gritty details, muted tones, dramatic contrast",
+    "lora_scale": 0.85,
+    "text_encoder_scale": 0.65
+  },
+  "Fabric": {
+    "path": "Kontext-Style/Fabric_lora",
+    "weights": "Fabric_lora_weights.safetensors",
+    "description": "Fabric texture art style",
+    "prompt": "<Transform into fabric art>, textile textures, woven patterns, cloth materials, stitching details, soft fabric appearance, tactile surface, layered threads, handcrafted weave, natural fiber tones",
+    "negative_prompt": "hard surfaces, metallic sheen, glass reflections, photorealistic rendering, sharp edges, synthetic gloss, rigid geometry, industrial texture",
+    "lora_scale": 0.75,
+    "text_encoder_scale": 0.55
+  },
+  "Chinese_Ink": {
+    "path": "Kontext-Style/Chinese_Ink_lora",
+    "weights": "Chinese_Ink_lora_weights.safetensors",
+    "description": "Traditional Chinese ink painting LoRA. Emulates flowing brushwork, tonal washes, and poetic minimalism. Ideal for stylized image-to-image transformations with a contemplative, organic feel.",
+    "prompt": "<Convert this image into Chinese ink painting style>, flowing brushstrokes, gradient ink washes, minimalist composition, poetic atmosphere, rice paper texture, monochrome tones, natural balance, preserved facial features, expressive eyes, clear teeth, soft contour transitions",
+    "negative_prompt": "colorful, digital rendering, sharp lines, photorealism, synthetic texture, cluttered layout, facial distortion, blurred eyes, obscured teeth, exaggerated outlines, harsh contrast",
+    "lora_scale": 0.7,
+    "text_encoder_scale": 0.5
+  },
+  "Origami": {
+    "path": "Kontext-Style/Origami_lora",
+    "weights": "Origami_lora_weights.safetensors",
+    "description": "Origami paper folding style",
+    "prompt": "<Transform into origami paper art>, geometric folds, angular shapes, crisp paper texture, layered creases, folded symmetry, pose-preserving contours, stylized facial geometry, clear eyes and teeth, handcrafted paper aesthetic",
+    "negative_prompt": "smooth curves, organic shapes, soft materials, realistic texture, facial distortion, bloated features, blurred eyes, obscured teeth, rounded silhouettes, photorealism",
+    "lora_scale": 0.85,
+    "text_encoder_scale": 0.65
+  },
+  "Oil_Painting": {
+    "path": "Kontext-Style/Oil_Painting_lora",
+    "weights": "Oil_Painting_lora_weights.safetensors",
+    "description": "Classic oil painting LoRA with enhanced facial preservation. Emulates rich brush textures and layered pigment while maintaining subject identity. Ideal for portraits and image-to-image workflows where likeness retention is critical.",
+    "prompt": "<Convert this image into classic oil painting style>, visible brushstrokes, layered pigment, rich textures, warm tones, canvas grain, traditional palette, soft lighting, preserved facial structure, defined musculature, clear eyes and teeth, pose fidelity",
+    "negative_prompt": "photorealism, flat colors, harsh edges, synthetic texture, facial distortion, bloated features, softened anatomy, abstract rendering, exaggerated proportions, blurred eyes, obscured teeth",
+    "lora_scale": 0.6,
+    "text_encoder_scale": 0.4
+  },
+  "Poly": {
+    "path": "Kontext-Style/Poly_lora",
+    "weights": "Poly_lora_weights.safetensors",
+    "description": "Low-poly 3D art style",
+    "prompt": "<Transform into low-poly 3D art>, geometric facets, angular shapes, flat color planes, minimalist polygons, stylized 3D look, preserved facial geometry, pose fidelity, simplified contours",
+    "negative_prompt": "high detail, smooth surfaces, curved edges, photorealism, bloated features, distorted anatomy, organic flow, soft gradients",
+    "lora_scale": 0.85,
+    "text_encoder_scale": 0.65
+  },
+  "LEGO": {
+    "path": "Kontext-Style/LEGO_lora",
+    "weights": "LEGO_lora_weights.safetensors",
+    "description": "LEGO brick building style",
+    "prompt": "<Transform into LEGO brick construction>, plastic block pieces, modular brick design, studs on top, bright toy-like colors, preserved proportions, clear facial features, pose fidelity",
+    "negative_prompt": "organic shapes, realistic materials, soft edges, natural textures, facial distortion, bloated geometry, muted tones, photorealism",
+    "lora_scale": 0.9,
+    "text_encoder_scale": 0.7
+  },
+  "Pop_Art": {
+    "path": "Kontext-Style/Pop_Art_lora",
+    "weights": "Pop_Art_lora_weights.safetensors",
+    "description": "Pop art style",
+    "prompt": "<Transform into pop art style>, bold colors, high contrast, halftone dots, graphic shapes, vibrant palette, Warhol-inspired aesthetic, preserved facial features, expressive eyes, stylized contours",
+    "negative_prompt": "muted colors, realistic shading, subtle tones, photographic rendering, soft gradients, facial distortion, anatomical warping, low contrast",
+    "lora_scale": 0.8,
+    "text_encoder_scale": 0.6
+  },
+  "3D_Chibi": {
+    "path": "Kontext-Style/3D_Chibi_lora",
+    "weights": "3D_Chibi_lora_weights.safetensors",
+    "description": "3D chibi character style",
+    "prompt": "<Transform into cute 3D chibi character>, oversized head, big expressive eyes, tiny body proportions, rounded features, adorable appearance, preserved facial clarity, clean eye and teeth geometry, stylized anatomy",
+    "negative_prompt": "realistic proportions, mature features, detailed anatomy, photorealistic rendering, bloated shapes, distorted expressions, harsh shadows",
+    "lora_scale": 0.8,
+    "text_encoder_scale": 0.6
+  },
+  "Pixel": {
+    "path": "Kontext-Style/Pixel_lora",
+    "weights": "Pixel_lora_weights.safetensors",
+    "description": "Pixel art style",
+    "prompt": "<Transform into pixel art>, visible pixels, limited color palette, retro game aesthetic, blocky shapes, 8-bit or 16-bit style, preserved facial geometry, clear eyes and teeth, simplified contours",
+    "negative_prompt": "smooth gradients, high resolution, photorealistic rendering, modern graphics, facial distortion, blurred features, bloated proportions",
+    "lora_scale": 0.85,
+    "text_encoder_scale": 0.65
+  },
+  "Rick_Morty": {
+    "path": "Kontext-Style/Rick_Morty_lora",
+    "weights": "Rick_Morty_lora_weights.safetensors",
+    "description": "Rick and Morty cartoon style",
+    "prompt": "<Transform into Rick and Morty cartoon style>, exaggerated expressions, wobbly lines, sci-fi elements, comedic proportions, Adult Swim aesthetic, preserved facial features, expressive eyes and teeth, stylized anatomy",
+    "negative_prompt": "realistic rendering, serious tone, smooth lines, photographic shading, detailed anatomy, bloated features, muted expressions",
+    "lora_scale": 0.8,
+    "text_encoder_scale": 0.6
+  },
+  "Line": {
+    "path": "Kontext-Style/Line_lora",
+    "weights": "Line_lora_weights.safetensors",
+    "description": "Line art drawing style",
+    "prompt": "<Transform into clean line art>, bold outlines, minimal shading, clear contours, simple linework, illustration style, preserved facial geometry, clean eyes and teeth, pose fidelity",
+    "negative_prompt": "photorealistic rendering, full color, complex shading, painterly texture, blurry lines, bloated features, distorted anatomy",
+    "lora_scale": 0.7,
+    "text_encoder_scale": 0.5
+  },
+  "Snoopy": {
+    "path": "Kontext-Style/Snoopy_lora",
+    "weights": "Snoopy_lora_weights.safetensors",
+    "description": "Snoopy/Peanuts comic style",
+    "prompt": "<Transform into Peanuts comic style>, simple rounded shapes, clean black outlines, minimal details, charming expressions, Charles Schulz aesthetic, preserved facial clarity, expressive eyes and teeth, stylized proportions",
+    "negative_prompt": "realistic rendering, complex details, dark mood, photographic shading, bloated features, distorted expressions, harsh contrast",
+    "lora_scale": 0.8,
+    "text_encoder_scale": 0.6
+  },
+  "Picasso": {
+    "path": "Kontext-Style/Picasso_lora",
+    "weights": "Picasso_lora_weights.safetensors",
+    "description": "Picasso cubist art style",
+    "prompt": "<Transform into Picasso cubist style>, geometric fragmentation, multiple viewpoints, abstract shapes, angular forms, modernist composition, stylized facial geometry, expressive eyes and teeth, pose-preserving abstraction",
+    "negative_prompt": "realistic perspective, photographic rendering, smooth curves, traditional composition, bloated features, softened anatomy, muted energy",
+    "lora_scale": 0.85,
+    "text_encoder_scale": 0.65
+  },
+  "American_Cartoon": {
+    "path": "Kontext-Style/American_Cartoon_lora",
+    "weights": "American_Cartoon_lora_weights.safetensors",
+    "description": "American cartoon style",
+    "prompt": "<Transform into classic American cartoon style>, bold outlines, exaggerated features, dynamic expressions, vibrant colors, animated look, preserved facial clarity, expressive eyes and teeth, stylized anatomy",
+    "negative_prompt": "realistic rendering, anime style, photographic texture, subtle expressions, muted colors, bloated proportions, distorted features",
+    "lora_scale": 0.8,
+    "text_encoder_scale": 0.6
+  },
+  "Macaron": {
+    "path": "Kontext-Style/Macaron_lora",
+    "weights": "Macaron_lora_weights.safetensors",
+    "description": "Macaron sweet style",
+    "prompt": "<Transform into sweet macaron style>, pastel colors, soft textures, cute aesthetic, dessert-like appearance, sugary delicate look, preserved facial features, clean eyes and teeth, rounded proportions",
+    "negative_prompt": "dark colors, harsh textures, realistic rendering, savory tones, rough surfaces, bloated features, distorted anatomy",
+    "lora_scale": 0.8,
+    "text_encoder_scale": 0.6
+  },
+  "Jojo": {
+    "path": "Kontext-Style/Jojo_lora",
+    "weights": "Jojo_lora_weights.safetensors",
+    "description": "JoJo's Bizarre Adventure anime style",
+    "prompt": "<Transform into JoJo's Bizarre Adventure style>, dramatic poses, intense expressions, bold linework, dynamic energy, powerful stance, Stand aura effects, preserved facial geometry, expressive eyes and teeth, stylized musculature",
+    "negative_prompt": "soft style, cute proportions, gentle expressions, realistic rendering, blurry features, weak poses, bloated anatomy",
+    "lora_scale": 0.8,
+    "text_encoder_scale": 0.6
+  },
+  "Vector": {
+    "path": "Kontext-Style/Vector_lora",
+    "weights": "Vector_lora_weights.safetensors",
+    "description": "Vector graphic art style",
+    "prompt": "<Transform into vector graphic art>, clean paths, smooth curves, flat colors, scalable design, geometric precision, digital illustration style, preserved facial clarity, clean eyes and teeth, pose fidelity",
+    "negative_prompt": "raster texture, painterly rendering, rough edges, photorealistic shading, grainy surfaces, bloated features, distorted anatomy",
+    "lora_scale": 0.8,
+    "text_encoder_scale": 0.6
+  },
+  "Van_Gogh": {
+    "path": "Kontext-Style/Van_Gogh_lora",
+    "weights": "Van_Gogh_lora_weights.safetensors",
+    "description": "Van Gogh impressionist style",
+    "prompt": "<Transform into Van Gogh impressionist style>, swirling brushstrokes, expressive texture, vibrant colors, thick paint application, post-impressionist aesthetic, preserved facial geometry, visible eyes and teeth, emotional atmosphere",
+    "negative_prompt": "photorealistic rendering, smooth surfaces, flat colors, digital art, sharp edges, facial distortion, muted tones, synthetic texture",
+    "lora_scale": 0.8,
+    "text_encoder_scale": 0.6
+  },
+  "Ghibli": {
+    "path": "Kontext-Style/Ghibli_lora",
+    "weights": "Ghibli_lora_weights.safetensors",
+    "description": "Studio Ghibli animation style",
+    "prompt": "<Transform into Studio Ghibli animation style>, whimsical characters, soft watercolor backgrounds, dreamy atmosphere, hand-drawn aesthetic, storybook charm, preserved facial features, expressive eyes and teeth, gentle lighting",
+    "negative_prompt": "realistic rendering, dark mood, harsh lighting, photographic texture, modern 3D style, bloated anatomy, muted expressions",
+    "lora_scale": 0.8,
+    "text_encoder_scale": 0.6
+  },
+  "Clay_Toy": {
+    "path": "Kontext-Style/Clay_Toy_lora",
+    "weights": "Clay_Toy_lora_weights.safetensors",
+    "description": "Clay toy/claymation style",
+    "prompt": "<Transform into clay toy style>, sculpted appearance, matte clay texture, handcrafted look, stop-motion aesthetic, playful character design, preserved facial clarity, clean eyes and teeth, rounded contours",
+    "negative_prompt": "smooth plastic, realistic skin, photographic rendering, sharp details, glossy surfaces, bloated features, distorted anatomy",
+    "lora_scale": 0.8,
+    "text_encoder_scale": 0.6
+  },
+  "Super_Pencil": {
+    "path": "prithivMLmods/Super-Pencil-Flux-LoRA",
+    "weights": "Pencil.safetensors",
+    "description": "Refined pencil sketch style with clean linework and tonal depth",
+    "prompt": "<Simple Pencil>, realistic pencil drawing of the input image, expressive shading, clean contours, preserved facial geometry, visible eyes and teeth, tonal depth",
+    "negative_prompt": "cartoonish rendering, messy lines, low detail, exaggerated features, childish style, blurred edges, bloated anatomy",
+    "lora_scale": 0.7,
+    "text_encoder_scale": 0.5
+  },
+  "Poly_Futurism": {
+    "path": "Kontext-Style/Poly_lora",
+    "weights": "Poly_lora_weights.safetensors",
+    "description": "Futuristic polygonal abstraction with faceted geometry and digital sculpture aesthetics",
+    "prompt": "<Transform into polygonal futuristic art style>, low-poly geometry, sharp edges, abstract composition, faceted contours, preserved pose and facial structure, stylized symmetry",
+    "negative_prompt": "soft textures, organic shapes, photorealism, blurry edges, painterly strokes, bloated features, distorted anatomy",
+    "lora_scale": 0.85,
+    "text_encoder_scale": 0.65
+  },
+  "Glass_Prism": {
+    "path": "drbaph/GlassPrism-kontext-LoRA",
+    "weights": "glass-prism-kontext-lora.safetensors",
+    "description": "Surreal refractive LoRA trained on FLUX.1-Kontext-dev. Emulates crystalline lighting and glass-like distortion with frosted transparency and spectral reflections.",
+    "prompt": "<glass prism distortion>, crystalline refraction, surreal lighting, frosted transparency, spectral glow, black background, preserved facial geometry, visible eyes and teeth, refractive symmetry",
+    "negative_prompt": "photorealism, matte texture, soft lighting, painterly style, cluttered composition, bloated features, distorted anatomy",
+    "lora_scale": 0.8,
+    "text_encoder_scale": 0.6
+  },
+  "Sketch": {
+    "path": "Shakker-Labs/FLUX.1-Kontext-dev-LoRA-Sketch-Style",
+    "weights": "FLUX-kontext-lora-sketch-style.safetensors",
+    "description": "Sketch style LoRA trained on Flux.1-Kontext-dev",
+    "prompt": "<Convert real photos into sketches>, clean linework, expressive shading, monochrome tones, pencil texture, precise details, preserved facial structure, visible eyes and teeth",
+    "negative_prompt": "photorealism, blurry edges, painterly strokes, low contrast, bloated features, distorted anatomy",
+    "lora_scale": 0.8,
+    "text_encoder_scale": 0.6
+  },
+  "American_Comic": {
+    "path": "borozkut/Comic-Style-LoRA-FLUX.1dev",
+    "weights": "comic-style-lora-000014.safetensors",
+    "description": "Hand-drawn American comic style LoRA trained on FLUX.1-Kontext-dev. Captures bold linework, vibrant color blocking, and stylized shading.",
+    "prompt": "<c0m4i4>, hand-drawn American comic style, bold ink lines, vibrant flat colors, stylized shading, expressive character design, preserved facial features, clear eyes and teeth, dynamic poses",
+    "negative_prompt": "photorealism, painterly strokes, low contrast, muddy colors, soft edges, realism artifacts, bloated anatomy",
+    "lora_scale": 0.85,
+    "text_encoder_scale": 0.65
+  },
+  "Ink_Wash": {
+    "path": "Kontext-Style/Chinese_Ink_lora",
+    "weights": "Chinese_Ink_lora_weights.safetensors",
+    "description": "Ink wash style LoRA trained on FLUX.1-Kontext-dev. Emulates traditional East Asian brushwork with fluid strokes and tonal gradients.",
+    "prompt": "<Eastern ink wash style>, expressive brushwork, monochrome gradients, traditional sumi-e aesthetic, flowing ink tones, few elements, breathing room, evokes stillness, impermanence, introspection, preserved facial clarity, soft contours",
+    "negative_prompt": "photorealism, color, sharp edges, digital artifacts, high contrast, bloated features, distorted anatomy",
+    "lora_scale": 0.7,
+    "text_encoder_scale": 0.5
+  },
+  "FractalGeometry": {
+    "path": "Jonjew/FractalGeometryStyle",
+    "weights": "ral-frctlgmtry_flux.safetensors",
+    "description": "Fractal Geometry Style LoRA trained on FLUX.1-Kontext-dev. Transforms images into intricate fractal-inspired compositions with recursive patterns, geometric symmetry, and mathematical abstraction. Ideal for surreal, algorithmic, or generative aesthetics.",
+    "prompt": "<Convert this image into fractal geometry style>, recursive patterns, geometric symmetry, fractal abstraction, mathematical elegance, surreal complexity, algorithmic texture, infinite depth, preserved facial geometry, stylized contours",
+    "negative_prompt": "photorealism, organic shapes, soft gradients, painterly style, cluttered layout, low detail, bloated features, distorted anatomy",
+    "lora_scale": 0.75,
+    "text_encoder_scale": 0.5
+  },
+  "WatercolorFlux": {
+    "path": "{lib_root}/models/lora/WATERCOLOR-lora.TA_trained.safetensors",
+    "weights": "WATERCOLOR-lora.TA_trained.safetensors",
+    "description": "Watercolor FLUX LoRA trained on FLUX.1 D. Emulates translucent pigment layering, soft wet-on-wet diffusion, and expressive brush streaks. Ideal for stylized image-to-image transformations with luminous, organic watercolor aesthetics.",
+    "prompt": "<Convert this image into watercolor painting style, watercolor, wet on wet, paintstreaks, watercolor painting> soft pigment flow, translucent layers, expressive brushwork, pastel gradients, paper grain texture, ambient light wash, preserved facial clarity, clean eyes and teeth",
+    "negative_prompt": "photorealism, sharp edges, saturated tones, digital rendering, synthetic texture, cluttered layout, harsh contrast, bloated features, distorted anatomy",
+    "lora_scale": 0.7,
+    "text_encoder_scale": 0.5
+  },
+  "Gorillaz": {
+    "path": "{lib_root}/models/lora/gorillaz-kontext-lora.safetensors",
+    "weights": "gorillaz-kontext-lora.safetensors",
+    "description": "Gorillaz Style LoRA trained on FLUX.1-Kontext-dev. Transforms images into the iconic cartoon-punk aesthetic of the Gorillaz universe—featuring bold linework, flat pop-art colors, and gritty textures.",
+    "prompt": "<make this image gorillaz style>, bold graphic outlines, flat color fills, grunge textures, cartoon-punk aesthetic, expressive character design, print-punk vibe, preserved facial structure, stylized eyes and teeth",
+    "negative_prompt": "photorealism, smooth gradients, modern rendering, saturated lighting, generic composition, bloated features, distorted anatomy",
+    "lora_scale": 0.85,
+    "text_encoder_scale": 0.6
+  },
+  "PencilDrawing": {
+    "path": "Muapi/pencil_drawing_flux",
+    "weights": "pencil_drawing_flux.safetensors",
+    "description": "Pencil Drawing Kontext Dev LoRA (Improved) trained on FLUX.1-Kontext-dev. Transforms images into finely detailed pencil and engraving-style illustrations with precise linework and tonal shading.",
+    "prompt": "<Pencil drawing>, fine pencil lines, masterful shading, monochrome texture, vintage etching, detailed sketch, graphite realism, classic illustration, preserved facial geometry, expressive eyes and teeth",
+    "negative_prompt": "photorealism, color, digital smoothness, soft gradients, painterly style, modern rendering, bloated features, distorted anatomy",
+    "lora_scale": 0.7,
+    "text_encoder_scale": 0.5
+  },
+  "Afremov": {
+    "path": "{lib_root}/models/lora/afremov_flux_objects1.safetensors",
+    "weights": "afremov_flux_objects1.safetensors",
+    "description": "Russian-Israeli-born Leonid Afremov was a modern impressionist artist. Created with oil paints and a palette knife, his works are alive with color and movement.",
+    "prompt": "<Afremov Style: QQQ.>, colorful oil painting, palette knife texture, Leonid Afremov style, saturated colors, emotional lighting, impressionist composition, vibrant reflections, preserved facial clarity, expressive eyes and teeth, stylized contours",
+    "negative_prompt": "photorealism, smooth gradients, muted colors, digital rendering, soft brushwork, cluttered composition, low contrast, dark shadows, desaturated tones, foggy atmosphere, gloomy mood, grayscale, monochrome, bloated features, distorted anatomy",
+    "lora_scale": 0.75,
+    "text_encoder_scale": 0.6
+  }
+}

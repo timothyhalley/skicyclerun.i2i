@@ -1,0 +1,29 @@
+LOCATION: {photo_city}, {photo_country}
+{ground_zero}
+
+WHAT YOU SEE IN PHOTO: {photo_activity}
+Scene type: {photo_scene_type}
+{interior_exterior_text}
+
+NEARBY LANDMARKS (with context):
+{nearby_pois}
+
+CONTEXT ABOUT PRIMARY LANDMARK:
+{poi_context}
+
+Write a travel blog paragraph about this scene. Include the nearby landmarks and what's happening in the photo.
+
+RULES:
+- NO first person (no "I", "we", "you", "As I wandered", etc.)
+- NO "this photo shows" or "this photo was taken"
+- Direct, engaging third-person prose only
+- Be concise and specific
+
+First, write a compelling WATERMARK sentence that captures the essence of this scene - the main subject, landmark, or street name with its character. Make it vivid and specific.
+
+Then write the full travel blog paragraph.
+
+WATERMARK:
+[One compelling sentence capturing the essence]
+
+DESCRIPTION: 

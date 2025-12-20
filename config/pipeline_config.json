@@ -1,0 +1,242 @@
+{
+  "pipeline": {
+    "name": "SkiCycleRun Photo Processing Pipeline",
+    "version": "1.0.0",
+    "stages": [
+      "export",
+      "cleanup",
+      "metadata_extraction",
+      "llm_image_analysis",
+      "preprocessing",
+      "lora_processing",
+      "post_lora_watermarking",
+      "s3_deployment"
+    ]
+  },
+  "paths": {
+    "lib_root": "${SKICYCLERUN_LIB_ROOT}",
+    "huggingface_cache": "${HUGGINGFACE_CACHE_LIB}",
+    "pipeline_base": "{lib_root}/pipeline",
+    "archive_albums": "{pipeline_base}/archive/albums",
+    "archive_metadata": "{pipeline_base}/archive/metadata",
+    "apple_photos_export": "{pipeline_base}/albums",
+    "raw_input": "{pipeline_base}/albums",
+    "metadata_dir": "{pipeline_base}/metadata",
+    "preprocessed": "{pipeline_base}/scaled",
+    "lora_processed": "{pipeline_base}/lora_processed",
+    "watermarked_final": "{pipeline_base}/watermarked_final",
+    "pre_lora_watermarked": "{pipeline_base}/watermarked_final",
+    "final_albums": "{pipeline_base}/watermarked_final",
+    "archive": "{pipeline_base}/archive",
+    "master_catalog": "{metadata_dir}/master.json"
+  },
+  "export": {
+    "enabled": true,
+    "source": "apple_photos",
+    "format": "jpeg",
+    "quality": 95,
+    "preserve_albums": true,
+    "script_path": "scripts/osxPhotoExporter.scpt"
+  },
+  "cleanup": {
+    "enabled": true,
+    "archive_old_outputs": true,
+    "remove_temp_files": true,
+    "archive_retention_days": 30
+  },
+  "metadata_extraction": {
+    "enabled": true,
+    "extract_exif": true,
+    "extract_geolocation": true,
+    "geocoding": {
+      "provider": "nominatim",
+      "api_url": "https://nominatim.openstreetmap.org/reverse",
+      "user_agent": "SkiCycleRun/1.0",
+      "rate_limit_seconds": 1.0,
+      "cache_enabled": true,
+      "cache_file": "{metadata_dir}/geocode_cache.json",
+      "cache_only": false,
+      "zoom": 16
+    },
+    "poi_enrichment": {
+      "enabled": true,
+      "radius_m": 300,
+      "max_results": 5,
+      "timeout_seconds": 25,
+      "overpass_url": "https://overpass-api.de/api/interpreter",
+      "categories": [],
+      "use_heading_filter": false,
+      "fov_degrees": 60,
+      "max_distance_m": 0,
+      "heading_weight": 0.7,
+      "distance_weight": 0.3
+    }
+  },
+  "preprocessing": {
+    "enabled": true,
+    "max_dimension": 2048,
+    "format": "webp",
+    "quality": 90,
+    "preserve_aspect_ratio": true,
+    "optimize": true,
+    "catalog_metadata": true
+  },
+  "watermark": {
+    "enabled": true,
+    "layout": "two_line",
+    "_comment_line1": "LINE 1 comes from llm_image_analysis.programmatic_watermark (landmark + location + copyright)",
+    "_comment_line2": "LINE 2 is built from location.formatted + copyright_line.format",
+    "location_line": {
+      "_comment": "Settings for LINE 1 (programmatic watermark: landmark + city/region + state/country + copyright)",
+      "font_size": 28,
+      "min_size": 20,
+      "color": [255, 255, 255, 220],
+      "stroke_color": [0, 0, 0, 255],
+      "stroke_width": 3
+    },
+    "copyright_line": {
+      "_comment": "Settings for LINE 2 (location + copyright)",
+      "format": "SkiCycleRun © {year} {symbol}",
+      "font_size": 16,
+      "min_size": 12,
+      "color": [255, 255, 255, 180],
+      "stroke_color": [0, 0, 0, 200],
+      "stroke_width": 2
+    },
+    "line_spacing": 8,
+    "symbol": "▲",
+    "fixed_year": 2026,
+    "year_offset": 1,
+    "include_landmark": false,
+    "landmark_min_score": 0.6,
+    "landmark_max_distance_m": 300,
+    "landmark_format": " — {name}",
+    "font": {
+      "path": "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+      "fallback_paths": [
+        "fonts/asimovian/Asimovian-Regular.ttf",
+        "/System/Library/Fonts/Supplemental/Arial.ttf",
+        "/System/Library/Fonts/Helvetica.ttc"
+      ],
+      "max_width_percent": 80,
+      "fit_mode": "shrink_to_fit"
+    },
+    "position": "bottom_right",
+    "margin": { "x": 50, "y": 40 },
+    "apply_before_lora": false
+  },
+  "lora_processing": {
+    "enabled": true,
+    "use_existing_config": true,
+    "registry_path": "config/lora_registry.json",
+    "batch_mode": true,
+    "preserve_metadata": true,
+    "loras_to_process": ["Afremov"],
+    "_Available_loras": [
+      "PencilDrawing",
+      "FractalGeometry",
+      "Afremov",
+      "Gorillaz",
+      "Origami"
+    ],
+    "input_folder": "{preprocessed}",
+    "output_folder": "{lora_processed}",
+    "input_image": "{preprocessed}/sample.webp",
+    "output_format": "webp",
+    "max_dim": 1024,
+    "num_inference_steps": 24,
+    "guidance_scale": 3.5,
+    "device": "mps",
+    "precision": "bfloat16",
+    "preprocess": {
+      "enabled": true,
+      "cleanup": true,
+      "face_detection": false
+    },
+    "cache_dir": "{huggingface_cache}",
+    "prompt": "",
+    "negative_prompt": ""
+  },
+  "llm_image_analysis": {
+    "enabled": true,
+    "endpoint": "http://localhost:11434",
+    "model": "devstral-small-2:24b",
+    "timeout": 300,
+    "fallback_on_error": true,
+    "_comment": "Enhanced 6-stage Ollama pipeline (poi_research -> vision analysis -> content generation)",
+    "poi_research_model": "ministral-3:8b",
+    "poi_research_temperature": 0.3,
+    "poi_research_tokens": 250,
+    "vision_model": "devstral-small-2:24b",
+    "vision_temperature": 0.3,
+    "vision_tokens": 500,
+    "vision_timeout": 300,
+    "content_model": "mixtral:8x7b",
+    "content_temperature": 0.7,
+    "content_top_p": 0.9,
+    "content_tokens": 500,
+    "content_timeout": 300,
+    "prompt_template": "config/ollama_prompt_template.txt",
+    "activity_prompt_template": "config/ollama_image_analysis_template.txt",
+    "writing_styles": [
+      {
+        "author": "Ernest Hemingway",
+        "style": "Use extremely short sentences. Simple words. Direct and powerful. No flowery language. State facts. Create tension through brevity."
+      },
+      {
+        "author": "Mark Twain",
+        "style": "Folksy and conversational with dry wit. Use colloquialisms and regional speech patterns. Add ironic observations about human nature."
+      },
+      {
+        "author": "Edgar Allan Poe",
+        "style": "Use gothic, ominous vocabulary. Build atmosphere with dark imagery. Create mood through descriptive language about shadows, depths, mystery."
+      },
+      {
+        "author": "Jack Kerouac",
+        "style": "Stream of consciousness flow. Long, breathless sentences. Jazz-like rhythm. Spontaneous and unfiltered observations strung together."
+      },
+      {
+        "author": "Oscar Wilde",
+        "style": "Employ paradox and irony. Make clever, unexpected comparisons. Use elegant syntax with a satirical edge."
+      },
+      {
+        "author": "Raymond Chandler",
+        "style": "Hard-boiled detective style. Use similes comparing things to tough, gritty urban imagery. Cynical observations. Short declarative sentences."
+      },
+      {
+        "author": "Dr. Seuss",
+        "style": "Use simple rhyming couplets. Create made-up whimsical words. Repeat sounds and phrases. Keep rhythm bouncy and playful."
+      },
+      {
+        "author": "Shakespeare",
+        "style": "Use elevated diction and metaphor. Employ parallel structure. Make grand comparisons. Add dramatic flourishes and poetic imagery."
+      },
+      {
+        "author": "Stephen King",
+        "style": "Build ordinary scenes with creeping unease. Use specific sensory details that hint at wrongness. Make the mundane feel threatening."
+      },
+      {
+        "author": "Douglas Adams",
+        "style": "Use absurd comparisons and ridiculous specificity. Employ dry British wit. Make outlandish observations seem matter-of-fact."
+      }
+    ]
+  },
+  "s3_deployment": {
+    "enabled": true,
+    "bucket_name": "skicyclerun.lib",
+    "bucket_prefix": "albums",
+    "source_folder": "{watermarked_final}",
+    "aws_profile": "default",
+    "preserve_album_structure": true,
+    "content_type": "image/webp",
+    "cache_control": "max-age=31536000, public",
+    "storage_class": "STANDARD",
+    "dry_run": false
+  },
+  "logging": {
+    "level": "INFO",
+    "console": true,
+    "file": "logs/pipeline_{timestamp}.log",
+    "include_timestamps": true
+  }
+}

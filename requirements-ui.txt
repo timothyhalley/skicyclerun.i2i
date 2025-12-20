@@ -1,0 +1,9 @@
+# SkiCycleRun Pipeline UI Dependencies
+# Native macOS UI using PyObjC
+
+# PyObjC - Python bindings for macOS Cocoa frameworks
+pyobjc-core>=10.0
+pyobjc-framework-Cocoa>=10.0
+
+# Note: The main pipeline dependencies are in requirements.txt
+# This file only contains UI-specific dependencies

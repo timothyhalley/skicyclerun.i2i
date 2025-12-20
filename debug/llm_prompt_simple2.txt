@@ -1,0 +1,13 @@
+SUBJECT: {photo_main_subject}
+LOCATION: {photo_city}, {photo_country}
+NEAREST: {nearby_pois}
+
+Write one paragraph about this subject at this location. Mention the nearest landmark.
+
+OUTPUT JSON:
+{{
+  "description": "paragraph of findings",
+  "summary": "short relavant summation of description",
+  "watermark_line1": "salent points incorporating prominant landmarks",
+  "watermark_line2": "key POI + {watermark_line2_format}"
+}}

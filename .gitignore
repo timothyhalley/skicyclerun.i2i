@@ -1,0 +1,93 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+*.pyc
+
+# Virtual Environments
+venv/
+env/
+ENV/
+.venv
+
+# PyCharm
+.idea/
+
+# VS Code
+.vscode/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# PyTest
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Logs
+logs/
+*.log
+
+# HuggingFace Cache
+huggingface/
+.cache/
+cache/
+
+# Model files (large)
+*.safetensors
+*.bin
+*.ckpt
+*.pt
+*.pth
+
+# Output/Generated Images
+output/
+outputs/
+results/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# Debug output
+debug_*.txt
+debug_*.png
+
+# Environment variables
+.env
+.env.local
+
+# Backup files
+*.bak
+*.backup
+
+# Data files
+geoScripts/data/
+# Dead code archive - excluded from version control
+.deadcode/

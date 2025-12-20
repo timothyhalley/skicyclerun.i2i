@@ -1,0 +1,25 @@
+{
+  "last_stages": [
+    "export",
+    "cleanup",
+    "metadata_extraction",
+    "llm_image_analysis",
+    "preprocessing",
+    "lora_processing",
+    "post_lora_watermarking"
+  ],
+  "last_flags": {
+    "cache_only_geocode": false,
+    "force_llm_reanalysis": false,
+    "force_watermark": false,
+    "verbose": true,
+    "debug": true,
+    "debug_prompt": true,
+    "force_clean": false,
+    "yes": true
+  },
+  "window_position": {
+    "x": 2011,
+    "y": 258
+  }
+}
