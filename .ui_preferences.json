@@ -1,9 +1,5 @@
 {
   "last_stages": [
-    "export",
-    "cleanup",
-    "metadata_extraction",
-    "llm_image_analysis",
     "preprocessing",
     "lora_processing",
     "post_lora_watermarking"
@@ -19,7 +15,10 @@
     "yes": true
   },
   "window_position": {
-    "x": 2011,
-    "y": 258
+    "x": 4601,
+    "y": 520,
+    "width": 1159,
+    "height": 1049,
+    "screen": "3840_520"
   }
 }

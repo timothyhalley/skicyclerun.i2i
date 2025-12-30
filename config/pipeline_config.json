@@ -14,8 +14,8 @@
     ]
   },
   "paths": {
-    "lib_root": "${SKICYCLERUN_LIB_ROOT}",
-    "huggingface_cache": "${HUGGINGFACE_CACHE_LIB}",
+    "lib_root": "${SKICYCLERUN_LIB_ROOT:/Volumes/MySSD/skicyclerun.i2i}",
+    "huggingface_cache": "${HUGGINGFACE_CACHE_LIB:/Volumes/MySSD/huggingface}",
     "pipeline_base": "{lib_root}/pipeline",
     "archive_albums": "{pipeline_base}/archive/albums",
     "archive_metadata": "{pipeline_base}/archive/metadata",
@@ -154,6 +154,7 @@
       "face_detection": false
     },
     "cache_dir": "{huggingface_cache}",
+    "local_files_only": true,
     "prompt": "",
     "negative_prompt": ""
   },

@@ -81,13 +81,12 @@ class PipelineController:
             if root.exists():
                 self._env_vars['SKICYCLERUN_LIB_ROOT'] = str(root)
                 
-                # Set HF cache to parent/models
-                hf_cache = root.parent / "models"
+                # Set HF cache to parent/huggingface (where models actually are)
+                hf_cache = root.parent / "huggingface"
                 hf_cache.mkdir(parents=True, exist_ok=True)
                 self._env_vars['HUGGINGFACE_CACHE_LIB'] = str(hf_cache)
                 self._env_vars['HF_HOME'] = str(hf_cache)
                 self._env_vars['HUGGINGFACE_CACHE'] = str(hf_cache)
-                self._env_vars['SKICYCLERUN_MODEL_LIB'] = str(hf_cache)
                 
                 datasets_cache = hf_cache / "datasets"
                 datasets_cache.mkdir(parents=True, exist_ok=True)
@@ -129,9 +128,11 @@ class PipelineController:
                 self._output_callback("="*80 + "\n\n")
             
             # Create subprocess with live output and environment variables
-            # Wrap with caffeinate to prevent system sleep during processing
+            # Wrap with caffeinate to prevent system AND display sleep during processing
+            # -d = prevent display sleep (screensaver)
+            # -i = prevent system idle sleep
             # stdin=None allows interactive input if --yes flag is not set
-            caffeinated_command = ['caffeinate', '-d'] + command_args
+            caffeinated_command = ['caffeinate', '-d', '-i'] + command_args
             
             self.process = subprocess.Popen(
                 caffeinated_command,

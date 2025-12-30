@@ -55,14 +55,32 @@ class MainWindow(NSObject):
     
     def _create_window(self):
         """Create main window"""
-        # Load saved window position or use defaults
+        # Load saved window position/size or use defaults
         prefs = self.config.load_preferences()
-        window_pos = prefs.get("window_position", {"x": 100, "y": 100})
+        window_pos = prefs.get("window_position", {"x": 100, "y": 100, "width": 900, "height": 750})
         x = window_pos.get("x", 100)
         y = window_pos.get("y", 100)
+        width = window_pos.get("width", 900)
+        height = window_pos.get("height", 750)
+        saved_screen = window_pos.get("screen")
+        
+        # If saved screen specified, try to position on that screen
+        if saved_screen:
+            from Cocoa import NSScreen
+            screens = NSScreen.screens()
+            for screen in screens:
+                screen_frame = screen.frame()
+                screen_id = f"{int(screen_frame.origin.x)}_{int(screen_frame.origin.y)}"
+                if screen_id == saved_screen:
+                    # Ensure window is within screen bounds
+                    if x < screen_frame.origin.x:
+                        x = screen_frame.origin.x + 100
+                    if y < screen_frame.origin.y:
+                        y = screen_frame.origin.y + 100
+                    break
         
         # Create window (x, y, width, height)
-        rect = NSMakeRect(x, y, 900, 750)
+        rect = NSMakeRect(x, y, width, height)
         
         # Import NSWindowStyleMaskMiniaturizable from Cocoa
         from Cocoa import NSWindowStyleMaskMiniaturizable
@@ -268,7 +286,7 @@ class MainWindow(NSObject):
         height = frame.size.height
         
         # Progress bar at top
-        progress_y = height - 35
+        progress_y = height - 40
         self.progress_indicator = NSProgressIndicator.alloc().initWithFrame_(
             NSMakeRect(10, progress_y, width - 20, 20)
         )
@@ -281,9 +299,9 @@ class MainWindow(NSObject):
         self.progress_indicator.setAutoresizingMask_(NSViewWidthSizable | NSViewMaxYMargin)
         parent_view.addSubview_(self.progress_indicator)
         
-        # Progress label (shows current stage)
+        # Progress label (shows current stage) - increased height to 24 to prevent clipping
         self.progress_label = NSTextField.alloc().initWithFrame_(
-            NSMakeRect(10, progress_y - 25, width - 20, 20)
+            NSMakeRect(10, progress_y - 28, width - 20, 24)
         )
         self.progress_label.setStringValue_("")
         self.progress_label.setEditable_(False)
@@ -294,9 +312,9 @@ class MainWindow(NSObject):
         self.progress_label.setAutoresizingMask_(NSViewWidthSizable | NSViewMaxYMargin)
         parent_view.addSubview_(self.progress_label)
         
-        # Scrollable output (below progress bar)
+        # Scrollable output (below progress bar) - increased top margin to accommodate larger progress UI
         scroll_view = NSScrollView.alloc().initWithFrame_(
-            NSMakeRect(10, 10, width - 20, height - 60)
+            NSMakeRect(10, 10, width - 20, height - 75)
         )
         scroll_view.setHasVerticalScroller_(True)
         scroll_view.setBorderType_(NSBezelBorder)
@@ -304,8 +322,13 @@ class MainWindow(NSObject):
         
         self.output_text_view = NSTextView.alloc().initWithFrame_(scroll_view.contentView().bounds())
         self.output_text_view.setEditable_(False)
+        self.output_text_view.setSelectable_(True)  # Enable text selection
+        self.output_text_view.setUsesFindBar_(True)  # Enable Cmd+F find
         self.output_text_view.setFont_(NSFont.fontWithName_size_("Monaco", 16))
         self.output_text_view.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable)
+        
+        # Enable standard keyboard shortcuts (Cmd+C, Cmd+A, etc.)
+        # NSTextView automatically supports copy when selectable=True
         
         # Set theme-aware background color
         self._apply_output_theme()
@@ -537,20 +560,36 @@ class MainWindow(NSObject):
             self.current_stage_name = stage_name
             self._update_progress()
         
-        # Detect long-running operation start (spinner messages)
-        # Example: "🌀 Running inference on IMG_1234.jpg..."
-        if '🌀' in text and 'Running inference' in text:
-            # Switch to indeterminate mode during inference
-            self.performSelectorOnMainThread_withObject_waitUntilDone_(
-                "setIndeterminateProgress:", True, False
-            )
-        
-        # Detect operation completion
-        if '✅ Complete!' in text:
-            # Switch back to determinate mode
-            self.performSelectorOnMainThread_withObject_waitUntilDone_(
-                "setIndeterminateProgress:", False, False
-            )
+        # Parse incremental progress within a stage
+        # Example: "⏳ Analysis progress: 3/24 processed | updated:3 skipped:0"
+        # Example: "🖼️  Processing image 15/42..."
+        # Example: "📸 Processing: image.jpeg (24/47)"
+        progress_match = re.search(r'(?:⏳|🖼️|🔄|📸).*?(\d+)\s*/\s*(\d+)', text)
+        if progress_match:
+            current = int(progress_match.group(1))
+            total = int(progress_match.group(2))
+            
+            if total > 0:
+                # Calculate within-stage progress
+                within_stage_percent = (current / total) * 100
+                
+                # Calculate overall progress
+                if self.total_stages > 0:
+                    # Each stage gets equal weight
+                    stage_weight = 100.0 / self.total_stages
+                    completed_stage_progress = self.completed_stages * stage_weight
+                    current_stage_progress = (within_stage_percent / 100.0) * stage_weight
+                    overall_progress = completed_stage_progress + current_stage_progress
+                else:
+                    overall_progress = within_stage_percent
+                
+                # Update progress bar with item count
+                progress_text = f"{self.current_stage_name}: {current}/{total}"
+                self.performSelectorOnMainThread_withObject_waitUntilDone_(
+                    "updateProgressBarOnMainThread:",
+                    {"progress": overall_progress, "stage": progress_text, "current": current, "total": total},
+                    False
+                )
         
         # Detect stage completion markers (look for next stage or pipeline complete)
         if '🎉 Pipeline complete!' in text or '✅ Pipeline completed successfully' in text:
@@ -593,25 +632,19 @@ class MainWindow(NSObject):
         self.progress_indicator.setHidden_(True)
         self.progress_label.setHidden_(True)
     
-    def setIndeterminateProgress_(self, is_indeterminate):
-        """Switch between determinate and indeterminate progress (main thread)"""
-        if is_indeterminate:
-            self.progress_indicator.setIndeterminate_(True)
-            self.progress_indicator.startAnimation_(None)
-            self.progress_label.setStringValue_(f"Processing: {self.current_stage_name}...")
-        else:
-            self.progress_indicator.setIndeterminate_(False)
-            self.progress_indicator.stopAnimation_(None)
-            self._update_progress()  # Update to current determinate value
-    
     def updateProgressBarOnMainThread_(self, data: dict):
         """Update progress bar value and label (main thread)"""
         progress = data.get("progress", 0)
         stage = data.get("stage", "")
+        current = data.get("current")
+        total = data.get("total")
         
         self.progress_indicator.setDoubleValue_(progress)
         
-        if stage:
+        if stage and current is not None and total is not None:
+            # Show detailed progress with counts
+            self.progress_label.setStringValue_(f"{stage} • {progress:.0f}% complete")
+        elif stage:
             self.progress_label.setStringValue_(f"Running: {stage}")
         else:
             self.progress_label.setStringValue_(f"Progress: {progress:.0f}%")
@@ -665,12 +698,27 @@ class MainWindow(NSObject):
         Called when user clicks red close button
         Stop any running pipeline and terminate the application
         """
-        # Save window position before closing
+        # Save window position, size, and screen before closing
         try:
+            from Cocoa import NSScreen
             frame = self.window.frame()
-            self.config.save_window_position(int(frame.origin.x), int(frame.origin.y))
+            
+            # Identify current screen
+            current_screen = self.window.screen()
+            screen_frame = current_screen.frame() if current_screen else None
+            screen_id = None
+            if screen_frame:
+                screen_id = f"{int(screen_frame.origin.x)}_{int(screen_frame.origin.y)}"
+            
+            self.config.save_window_position(
+                int(frame.origin.x), 
+                int(frame.origin.y),
+                int(frame.size.width),
+                int(frame.size.height),
+                screen_id
+            )
         except Exception as e:
-            print(f"Warning: Failed to save window position: {e}")
+            print(f"Warning: Failed to save window state: {e}")
         
         # Stop pipeline if running
         if self._stop_callback:

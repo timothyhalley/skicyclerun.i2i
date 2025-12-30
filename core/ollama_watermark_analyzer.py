@@ -350,8 +350,17 @@ Answer in JSON only:
         """
         location = metadata.get('location', {})
         country = location.get('country', 'Unknown')
-        city = location.get('city', 'Unknown')
+        city = location.get('city')
         state = location.get('state', '')
+        
+        # If no city, extract first part of display_name (e.g., "Red Meadow Creek Road")
+        if not city or city in ['Unknown', 'None', '']:
+            display_name = location.get('display_name', '')
+            if display_name:
+                # Extract first component before comma
+                city = display_name.split(',')[0].strip()
+            else:
+                city = 'Unknown'
         
         # Build location part: city + state (for US/Canada) or city + country (others)
         if country in ['Canada', 'United States'] and state:
@@ -642,7 +651,7 @@ Answer in JSON only:
                 # (WATERMARK is now programmatic, not from LLM)
                 travel_blog = ""
                 summary = ""
-                watermark_text = ""  # Keep for backward compatibility but not used
+                # watermark_text field removed - deprecated in favor of programmatic_watermark
                 
                 # Use case-insensitive regex for section markers
                 import re
@@ -680,6 +689,14 @@ Answer in JSON only:
                         logWarn(f"⚠️  LLM returned unparseable content (length: {len(content)})")
                         logWarn(f"    First 200 chars: {content[:200]}")
                 
+                # Fallback for missing summary when travel_blog exists
+                if travel_blog and not summary:
+                    logWarn(f"⚠️  LLM did not generate SUMMARY section - creating from travel_blog")
+                    # Extract first sentence from travel_blog as summary
+                    first_sentence = travel_blog.split('.')[0].strip() if '.' in travel_blog else travel_blog[:150]
+                    summary = first_sentence
+                    logWarn(f"    Generated summary: {summary[:100]}...")
+                
                 # CRITICAL CLEANUP: Remove common LLM artifacts
                 import re
                 
@@ -691,10 +708,10 @@ Answer in JSON only:
                     # Remove markdown bold formatting (**text** -> text)
                     text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)
                     
-                    # Remove ALL section header prefixes (case insensitive)
-                    # "travel blog:", "TRAVEL BLOG:", "summary:", "SUMMARY:", "watermark:", "WATERMARK:"
-                    text = re.sub(r'^travel\s+blog\s*:\s*', '', text, flags=re.IGNORECASE)
-                    text = re.sub(r'^summary\s*:\s*', '', text, flags=re.IGNORECASE)
+                    # Remove ALL section header prefixes (case insensitive, allow typos)
+                    # Handles: "travel blog:", "TRVEL BLOG:", "summary:", etc.
+                    text = re.sub(r'^tr[a-z]*\s*blog\s*:\s*', '', text, flags=re.IGNORECASE)  # travel/trvel blog
+                    text = re.sub(r'^summ?ary\s*:\s*', '', text, flags=re.IGNORECASE)  # summary/summry
                     text = re.sub(r'^watermark\s*:\s*', '', text, flags=re.IGNORECASE)
                     
                     # Remove escaped quotes
@@ -711,10 +728,9 @@ Answer in JSON only:
                     
                     return text
                 
-                # Clean all three fields (note: watermark_text from LLM is deprecated)
+                # Clean both fields
                 travel_blog = clean_text(travel_blog)
                 summary = clean_text(summary)
-                watermark_text = clean_text(watermark_text)  # Keep for backward compatibility
                 
                 # Build programmatic watermark
                 programmatic_watermark = self.build_programmatic_watermark(metadata, primary_subject)
@@ -730,7 +746,6 @@ Answer in JSON only:
                     "travel_blog": travel_blog,
                     "summary": summary,
                     "programmatic_watermark": programmatic_watermark,
-                    "watermark_text": watermark_text,  # Deprecated
                     "writing_style": selected_author  # Store author name for metadata
                 }
             else:
@@ -875,19 +890,19 @@ Answer in JSON only:
             print(f"📖 Travel Blog:\n{final_content['travel_blog']}\n")
         if 'summary' in final_content:
             print(f"📌 Summary:\n{final_content['summary']}\n")
-        if 'watermark_text' in final_content:
-            print(f"🏷️  Watermark Text: {final_content['watermark_text']}")
+        if 'programmatic_watermark' in final_content:
+            print(f"🏷️  Programmatic Watermark: {final_content['programmatic_watermark']}")
         print("=" * 80)
         print(f"   ⏱️  Time: {stage6_time:.2f}s")
         print()
         
-        # Compile final result with NEW field names (travel_blog, summary, watermark_text)
+        # Compile final result (travel_blog, summary, programmatic_watermark)
         total_time = time.time() - start_time
         
         result = {
             "travel_blog": final_content.get('travel_blog', ''),
             "summary": final_content.get('summary', ''),
-            "watermark_text": final_content.get('watermark_text', ''),
+            # watermark_text field REMOVED - fully deprecated, use programmatic_watermark instead
             "programmatic_watermark": final_content.get('programmatic_watermark', ''),
             "writing_style": final_content.get('writing_style', ''),
             "primary_subject": primary_subject.get('primary_subject', ''),

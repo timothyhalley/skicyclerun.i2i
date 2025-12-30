@@ -58,6 +58,19 @@ class PipelineApp:
         from Cocoa import NSApplicationActivationPolicyRegular
         app.setActivationPolicy_(NSApplicationActivationPolicyRegular)
         
+        # Set application icon (use SF Symbols for macOS native look)
+        try:
+            from Cocoa import NSImage
+            # Use SF Symbol for mountain/photo theme
+            icon = NSImage.imageWithSystemSymbolName_accessibilityDescription_(
+                "photo.on.rectangle.angled",  # Photo/image icon
+                "SkiCycleRun Pipeline"
+            )
+            if icon:
+                app.setApplicationIconImage_(icon)
+        except Exception as e:
+            print(f"Warning: Could not set app icon: {e}")
+        
         # Show window
         self.window.show()
         

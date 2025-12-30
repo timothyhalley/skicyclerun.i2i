@@ -36,7 +36,6 @@ def resolve_config_placeholders(config: Dict[str, Any]) -> Dict[str, Any]:
     paths = config.get("paths", {})
     env_lib = os.getenv("SKICYCLERUN_LIB_ROOT")
     env_hf_cache = os.getenv("HUGGINGFACE_CACHE_LIB")
-    legacy_models_env = os.getenv("SKICYCLERUN_MODEL_LIB")
     env_huggingface_cache = os.getenv("HUGGINGFACE_CACHE")
     env_transformers_cache = os.getenv("TRANSFORMERS_CACHE")
     env_hf_home = os.getenv("HF_HOME")
@@ -62,7 +61,6 @@ def resolve_config_placeholders(config: Dict[str, Any]) -> Dict[str, Any]:
 
     candidate_paths = [
         env_hf_cache,
-        legacy_models_env,
         env_huggingface_cache,
         env_transformers_cache,
         env_hf_home,

@@ -183,19 +183,29 @@ class PipelineConfig:
             # Silently fail if can't save preferences
             pass
     
-    def save_window_position(self, x: int, y: int):
+    def save_window_position(self, x: int, y: int, width: int = None, height: int = None, screen: str = None):
         """
-        Save window position without affecting stages/flags
+        Save window position, size, and screen without affecting stages/flags
         
         Args:
             x: Window x coordinate
             y: Window y coordinate
+            width: Window width (optional)
+            height: Window height (optional)
+            screen: Screen identifier (optional)
         """
         prefs_path = Path(self.config_path).parent.parent / self.PREFERENCES_FILE
         
         # Load existing preferences
         preferences = self.load_preferences()
-        preferences["window_position"] = {"x": x, "y": y}
+        window_state = {"x": x, "y": y}
+        if width is not None:
+            window_state["width"] = width
+        if height is not None:
+            window_state["height"] = height
+        if screen is not None:
+            window_state["screen"] = screen
+        preferences["window_position"] = window_state
         
         try:
             with open(prefs_path, 'w') as f:

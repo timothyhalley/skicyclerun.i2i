@@ -171,7 +171,7 @@ def is_already_processed(image_path, config, input_base_folder=None, lora_name=N
 # ────────────────────────────────────────────────────────────────────────
 # Save result image with timestamp (maintains subfolder structure)
 # ────────────────────────────────────────────────────────────────────────
-def save_result(image_path, result_image, config, input_base_folder=None, lora_name=None):
+def save_result(image_path, result_image, config, input_base_folder=None, lora_name=None, seed=None):
     base_name = os.path.splitext(os.path.basename(image_path))[0]
     timestamp = datetime.now().strftime("%d%H%M%S")
     # Use lora_name if provided, otherwise use 'default'
@@ -195,7 +195,85 @@ def save_result(image_path, result_image, config, input_base_folder=None, lora_n
         output_path = os.path.join(config["output_folder"], output_name)
     
     result_image.save(output_path, format=config["output_format"].upper())
+    
+    # Build metadata dict with all generation parameters
+    metadata = {
+        'seed': seed,
+        'style': style,
+        'prompt': config.get('prompt', ''),
+        'negative_prompt': config.get('negative_prompt', ''),
+        'num_inference_steps': config.get('num_inference_steps'),
+        'guidance_scale': config.get('guidance_scale'),
+        'device': config.get('device'),
+        'precision': config.get('precision'),
+        'source_image': image_path,
+        'generated_at': datetime.now().isoformat()
+    }
+    
+    # Write metadata to master.json instead of separate JSON file
+    try:
+        from core.master_store import MasterStore
+        from pathlib import Path as PathLib
+        
+        master_path = config.get('paths', {}).get('master_catalog')
+        if not master_path:
+            logWarn(f"⚠️  No master_catalog path configured - metadata not saved")
+            logInfo(f"📁 Saved: {output_path}")
+            return output_path, metadata
+            
+        master_store = MasterStore(master_path)
+        
+        # Find the ORIGINAL source image entry (not the preprocessed path)
+        # The preprocessed image is stored as derivatives.preprocessed under the original entry
+        original_source_path = None
+        
+        logDebug(f"🔍 Looking for original source for: {PathLib(image_path).name}")
+        
+        # First, check if this IS an original source path (has an entry)
+        if master_store.get(image_path):
+            original_source_path = image_path
+            logDebug(f"✓ Found direct entry")
+        else:
+            # Search for original entry that has this preprocessed path as a derivative
+            for path_str, entry in master_store.list_paths().items():
+                prep_path = entry.get('derivatives', {}).get('preprocessed', {}).get('path')
+                if prep_path == image_path:
+                    original_source_path = path_str
+                    logDebug(f"✓ Found original via preprocessed.path")
+                    break
+            
+            # Fallback: match by stem (filename without extension/path)
+            if not original_source_path:
+                image_stem = PathLib(image_path).stem
+                for path_str in master_store.list_paths().keys():
+                    if PathLib(path_str).stem == image_stem:
+                        original_source_path = path_str
+                        logDebug(f"✓ Found original via stem match")
+                        break
+        
+        if original_source_path:
+            # Store under original source image path with lora generation metadata
+            lora_section = f"lora_generations.{style}"
+            patch = {
+                lora_section: {
+                    'output_path': output_path,
+                    'output_name': output_name,
+                    **metadata  # Include all metadata fields
+                }
+            }
+            master_store.update_entry(original_source_path, patch, stage='lora_processing')
+            logInfo(f"📝 Saved LoRA metadata → master.json['{PathLib(original_source_path).name}']['{lora_section}']")
+            logDebug(f"   seed={seed}, steps={metadata['num_inference_steps']}, guidance={metadata['guidance_scale']}")
+        else:
+            logWarn(f"⚠️  Could not find original source entry for {PathLib(image_path).name} in master.json")
+            logWarn(f"   Metadata NOT saved - watermarking stage will have null values!")
+    except Exception as e:
+        import traceback
+        logWarn(f"⚠️  Could not write to master.json: {e}")
+        logDebug(f"Traceback: {traceback.format_exc()}")
+    
     logInfo(f"📁 Saved: {output_path}")
+    return output_path, metadata
 
 # ────────────────────────────────────────────────────────────────────────
 # Batch image discovery (recursive)
@@ -277,7 +355,6 @@ def main():
 
         env_root = os.getenv("SKICYCLERUN_LIB_ROOT")
         env_cache = os.getenv("HUGGINGFACE_CACHE_LIB")
-        legacy_env_cache = os.getenv("SKICYCLERUN_MODEL_LIB")
         hf_home = os.getenv("HF_HOME")
         hf_cache = os.getenv("HUGGINGFACE_CACHE")
         transformers_cache = os.getenv("TRANSFORMERS_CACHE")
@@ -294,15 +371,13 @@ def main():
             logInfo(f"        📁 Resolved lib_root: {resolved_root}", console_only=True)
         if env_cache:
             logInfo(f"        🧠 HUGGINGFACE_CACHE_LIB: {env_cache}", console_only=True)
-        if legacy_env_cache:
-            logInfo(f"        🧠 SKICYCLERUN_MODEL_LIB (legacy): {legacy_env_cache}", console_only=True)
         if hf_home:
             logInfo(f"        🧠 HF_HOME: {hf_home}", console_only=True)
         if hf_cache and hf_cache != env_cache:
             logInfo(f"        🧠 HUGGINGFACE_CACHE: {hf_cache}", console_only=True)
         if transformers_cache:
             logInfo(f"        🧠 TRANSFORMERS_CACHE: {transformers_cache}", console_only=True)
-        if not any([env_cache, legacy_env_cache, hf_home, hf_cache, transformers_cache]):
+        if not any([env_cache, hf_home, hf_cache, transformers_cache]):
             logInfo("        🧠 Hugging Face cache env vars: (none set; using config value)", console_only=True)
         if resolved_cache:
             logInfo(f"        🗂️ HuggingFace cache (resolved): {resolved_cache}", console_only=True)
@@ -731,10 +806,6 @@ def main():
             
             if args.verbose:
                 logInfo(f"🚀 Starting inference with {config['num_inference_steps']} steps...")
-                
-            spinner = Spinner(f"Running inference on {os.path.basename(image_path)}")
-            if not args.verbose:  # Don't show spinner if verbose (conflicts with output)
-                spinner.start()
 
             # Generate or use provided seed for reproducibility
             import random
@@ -747,6 +818,7 @@ def main():
                 logDebug(f"Steps: {config['num_inference_steps']}, Guidance: {config['guidance_scale']}")
                 logDebug(f"Seed: {seed}")
 
+            # Spinner removed - tqdm progress bars in run_inference handle progress display
             result = run_inference(
                 pipeline,
                 image,
@@ -758,8 +830,6 @@ def main():
                 device
             )
 
-            if not args.verbose:
-                spinner.stop()
             output_image = result.images[0]  # extract the actual PIL image
             
             # Explicitly delete the result object to free memory
@@ -789,7 +859,7 @@ def main():
                 logDebug(f"Result image - Size: {output_image.size}, Mode: {output_image.mode}")
 
             try:
-                save_result(image_path, output_image, config, input_base_folder, lora_name=lora_cfg["adapter_name"])  # ✅ pass the PIL image and LoRA name here
+                output_path, metadata = save_result(image_path, output_image, config, input_base_folder, lora_name=lora_cfg["adapter_name"], seed=seed)  # ✅ pass seed
                 processed_count += 1
                 if args.verbose:
                     logInfo(f"✅ Successfully saved result for {os.path.basename(image_path)}")

@@ -26,7 +26,7 @@ from utils.logger import logInfo, logError, logWarn
 def find_images_in_directory(directory: Path) -> List[Path]:
     """
     Find all image files in directory using consistent extension patterns.
-    Returns list of image file paths.
+    Returns list of image file paths that actually exist.
     """
     extensions = ['jpg', 'jpeg', 'png', 'heic', 'webp']
     image_files = []
@@ -34,6 +34,9 @@ def find_images_in_directory(directory: Path) -> List[Path]:
     for ext in extensions:
         image_files.extend(directory.glob(f'**/*.{ext}'))
         image_files.extend(directory.glob(f'**/*.{ext.upper()}'))
+    
+    # Filter to only files that actually exist (glob can return broken paths)
+    image_files = [f for f in image_files if f.exists() and f.is_file()]
     
     return image_files
 
@@ -279,6 +282,24 @@ class PipelineRunner:
         
         logInfo("🗺️  Stage 2: Extracting metadata and geolocation")
         
+        # CLEANUP: Remove stale entries from master.json for files that no longer exist in albums
+        # This ensures master.json only contains files from pipeline/albums
+        if self.master_store:
+            albums_path = Path(self.paths.get('raw_input'))
+            stale_count = 0
+            for path_key in list(self.master_store.data.keys()):
+                # Only check original files (not derivatives)
+                entry = self.master_store.data[path_key]
+                if entry.get('source_path'):
+                    continue
+                # Check if file exists in albums folder
+                if not Path(path_key).exists():
+                    del self.master_store.data[path_key]
+                    stale_count += 1
+            if stale_count > 0:
+                self.master_store.save()
+                logInfo(f"🧹 Removed {stale_count} stale entries (files not in albums folder)")
+        
         # Legacy catalog retired; skipping reads.
         
         # Force reload geo_extractor module to pick up any code changes
@@ -399,7 +420,7 @@ class PipelineRunner:
                 if 'metadata_extraction' in entry.get('pipeline', {}).get('stages', []):
                     # Provide date/location fields under raw path key
                     raw_path = fp
-                    location = entry.get('location', {})
+                    location = entry.get('location') or {}
                     existing_catalog[raw_path] = {
                         'date_taken': entry.get('date_taken'),
                         'date_taken_utc': entry.get('date_taken_utc'),
@@ -643,29 +664,49 @@ class PipelineRunner:
         no_image = 0
 
         processed = 0
-        # Count only originals (entries without source_path)
-        total = sum(1 for e in data.values() if not e.get('source_path'))
+        
+        # Pre-scan to count valid images (originals that exist and pass filters)
+        # Also clean up stale entries for files that no longer exist
+        valid_images = []
+        stale_entries = []
+        for p, e in data.items():
+            # Skip derivatives
+            if e.get('source_path'):
+                continue
+            # Apply path filter if provided
+            if self.sweep_path_contains and self.sweep_path_contains not in p:
+                continue
+            # Check if file exists
+            if Path(p).exists():
+                valid_images.append((p, e))
+            else:
+                no_image += 1
+                stale_entries.append(p)
+        
+        # Remove stale entries from master.json (files that don't exist)
+        if stale_entries and self.master_store:
+            for stale_path in stale_entries:
+                if stale_path in self.master_store.data:
+                    del self.master_store.data[stale_path]
+            self.master_store.save()
+            logInfo(f"🧹 Removed {len(stale_entries)} stale entries from master store")
+                
+        total = len(valid_images)
+        total_derivatives = sum(1 for e in data.values() if e.get('source_path'))
         last_pulse = time.time()
         logInfo(f"🔎 Analysis settings — path_filter: {bool(self.sweep_path_contains)}, limit: {self.sweep_limit or 'none'}")
-        logInfo(f"📊 Processing {total} original images (skipping {len(data) - total} derivatives)")
+        logInfo(f"📊 Processing {total} original images (skipping {total_derivatives} derivatives)")
         
         try:
-            for p, e in list(data.items()):
-                # Skip derivative files - they inherit location from source_path
-                if e.get('source_path'):
-                    continue
-                    
-                # Apply path filter if provided
-                if self.sweep_path_contains and self.sweep_path_contains not in p:
-                    continue
-                
-                # Check if image file exists
-                if not Path(p).exists():
-                    no_image += 1
-                    logWarn(f"⚠️  Image file not found: {Path(p).name}")
-                    continue
+            for p, e in valid_images:
                     
                 try:
+                    # Skip if already has LLM analysis (unless force flag is set)
+                    if e.get('llm_image_analysis') and not self.force_llm_reanalysis:
+                        skipped += 1
+                        processed += 1
+                        continue
+                    
                     patch = {}
 
                     # Extract context from metadata (POI data NOT stored in master.json anymore)
@@ -875,9 +916,9 @@ class PipelineRunner:
             ]
             
             try:
-                # Capture stderr to show errors, but let stdout stream for progress
+                # Let stdout/stderr stream directly for progress and timing
                 # Pass environment to ensure UI-set variables are inherited
-                result = subprocess.run(cmd, check=True, stderr=subprocess.PIPE, text=True, env=os.environ.copy())
+                result = subprocess.run(cmd, check=True, text=True, env=os.environ.copy())
                 logInfo(f"\n✅ {lora_name} processing complete")
             except subprocess.CalledProcessError as e:
                 logError(f"\n❌ {lora_name} processing failed: {e}")
@@ -985,6 +1026,18 @@ class PipelineRunner:
             processed += 1
             
             try:
+                # Load LoRA generation metadata from master.json (where lora_transformer.py saved it)
+                # Data is stored in source_metadata under lora_generations.{style_name}
+                lora_generation_params = source_metadata.get('lora_generations', {}).get(style_name, {})
+                
+                if not lora_generation_params:
+                    logWarn(f"⚠️  No LoRA generation metadata found for {lora_path.name}")
+                    logWarn(f"   Looking in: master.json['{Path(source_path).name}']['lora_generations.{style_name}']")
+                    logWarn(f"   Available lora_generations: {list(source_metadata.get('lora_generations', {}).keys())}")
+                    lora_generation_params = {}
+                else:
+                    logInfo(f"✓ Loaded LoRA metadata: seed={lora_generation_params.get('seed')}, steps={lora_generation_params.get('num_inference_steps')}")
+                
                 # ============================================
                 # WATERMARK ASSEMBLY (SINGLE SOURCE OF TRUTH)
                 # ============================================
@@ -995,10 +1048,6 @@ class PipelineRunner:
                 
                 # LINE 2: Get programmatic watermark (city, state, emoji, copyright)
                 line2_text = llm_analysis.get('programmatic_watermark', '').strip()
-                
-                # Fallback to deprecated watermark_text if programmatic_watermark not found
-                if not line2_text:
-                    line2_text = llm_analysis.get('watermark_text', '').strip()
                 
                 # If no programmatic watermark, build fallback from location + copyright
                 if not line2_text:
@@ -1015,10 +1064,17 @@ class PipelineRunner:
                     
                     line2_text = f"{location_formatted} {copyright_text}"
                 
+                # Add seed to line2 if available
+                seed_value = lora_generation_params.get('seed')
+                if seed_value:
+                    line2_text = f"{line2_text}  🎲 {seed_value}"
+                
                 # LOG TO TERMINAL
                 print(f"\n💧 Watermarking: {lora_path.name}")
                 print(f"   🏷️  LINE 1 (Summary): {line1_text}")
                 print(f"   🏷️  LINE 2 (Programmatic): {line2_text}")
+                if seed_value:
+                    print(f"   🎲 Seed: {seed_value}")
                 
                 # Apply watermark (clean signature - just line1 and line2)
                 watermark_app.apply_watermark(
@@ -1042,12 +1098,21 @@ class PipelineRunner:
                         copyright_metadata
                     )
                 
-                # Record watermark application (REFERENCES only - no data duplication)
+                # Record watermark application with full LoRA generation metadata
                 font_cfg = watermark_config.get('font', {})
                 watermark_patch = {
                     'lora_path': str(lora_path),
                     'output_path': str(output_file),
                     'style': style_name,
+                    'seed': lora_generation_params.get('seed'),
+                    'prompt': lora_generation_params.get('prompt'),
+                    'negative_prompt': lora_generation_params.get('negative_prompt'),
+                    'num_inference_steps': lora_generation_params.get('num_inference_steps'),
+                    'guidance_scale': lora_generation_params.get('guidance_scale'),
+                    'device': lora_generation_params.get('device'),
+                    'precision': lora_generation_params.get('precision'),
+                    'source_image': lora_generation_params.get('source_image'),
+                    'generated_at': lora_generation_params.get('generated_at'),
                     'watermark_sources': {
                         'line1': 'llm_image_analysis.summary',
                         'line2': 'llm_image_analysis.programmatic_watermark'
@@ -1536,25 +1601,29 @@ class PipelineRunner:
         if lib_root:
             logInfo(f"        📁 Resolved lib_root: {lib_root}")
         env_cache = os.getenv("HUGGINGFACE_CACHE_LIB")
-        legacy_env_cache = os.getenv("SKICYCLERUN_MODEL_LIB")
         hf_home = os.getenv("HF_HOME")
         hf_cache = os.getenv("HUGGINGFACE_CACHE")
         transformers_cache = os.getenv("TRANSFORMERS_CACHE")
 
         if env_cache:
             logInfo(f"        🧠 HUGGINGFACE_CACHE_LIB: {env_cache}")
-        if legacy_env_cache:
-            logInfo(f"        🧠 SKICYCLERUN_MODEL_LIB (legacy): {legacy_env_cache}")
         if hf_home:
             logInfo(f"        🧠 HF_HOME: {hf_home}")
         if hf_cache and hf_cache != env_cache:
             logInfo(f"        🧠 HUGGINGFACE_CACHE: {hf_cache}")
         if transformers_cache:
             logInfo(f"        🧠 TRANSFORMERS_CACHE: {transformers_cache}")
-        if not any([env_cache, legacy_env_cache, hf_home, hf_cache, transformers_cache]):
+        if not any([env_cache, hf_home, hf_cache, transformers_cache]):
             logInfo("        🧠 Hugging Face cache env vars: (none set; using config fallback)")
         if huggingface_cache:
             logInfo(f"        🗂️ HuggingFace cache (resolved): {huggingface_cache}")
+        
+        # Show local_files_only setting for LoRA processing
+        if needs_lora:
+            local_files_only = self.config.get("local_files_only", True)
+            mode_icon = "🔒" if local_files_only else "🌐"
+            mode_text = "LOCAL ONLY (no network access)" if local_files_only else "NETWORK ENABLED (may download models)"
+            logInfo(f"        {mode_icon} Model loading mode: {mode_text}")
 
         for entry in results:
             label = entry['label']
@@ -1622,12 +1691,14 @@ if __name__ == "__main__":
     import utils.logger as logger_module
     logger_module.VERBOSE = args.verbose
     
-    # Setup basic console logging for all operations (including --check-config)
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.INFO)
-    console_handler.setFormatter(logging.Formatter('%(message)s'))
-    logging.getLogger().addHandler(console_handler)
-    logging.getLogger().setLevel(logging.INFO)
+    # Setup console logging only if not already configured (prevent duplicates)
+    root_logger = logging.getLogger()
+    if not root_logger.handlers:
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(logging.INFO)
+        console_handler.setFormatter(logging.Formatter('%(message)s'))
+        root_logger.addHandler(console_handler)
+    root_logger.setLevel(logging.INFO)
 
     if not args.check_config:
         missing_envs = []
@@ -1635,7 +1706,6 @@ if __name__ == "__main__":
             missing_envs.append("SKICYCLERUN_LIB_ROOT")
         cache_env_present = any([
             os.getenv("HUGGINGFACE_CACHE_LIB"),
-            os.getenv("SKICYCLERUN_MODEL_LIB"),
             os.getenv("HUGGINGFACE_CACHE"),
             os.getenv("HF_HOME"),
             os.getenv("TRANSFORMERS_CACHE"),
