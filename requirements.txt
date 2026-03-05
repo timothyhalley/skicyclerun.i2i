@@ -21,8 +21,12 @@ tokenizers
 
 # Image processing and utilities
 pillow
+piexif
 numpy
 timezonefinder
+
+# HTTP requests
+requests
 
 # System monitoring and utilities
 psutil

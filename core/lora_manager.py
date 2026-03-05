@@ -36,20 +36,42 @@ def apply_lora(pipeline, lora_config, config):
     
     logInfo(f"⚖️  LoRA strength - UNet: {lora_scale}, Text Encoder: {text_encoder_scale}")
 
-    # 🔍 Determine if path is local file or HuggingFace repo
+    # 🔍 Determine if path is local file/directory or HuggingFace repo
     lora_path = lora_config["path"]
-    is_local_file = os.path.exists(lora_path) and os.path.isfile(lora_path)
+    weights_filename = lora_config["weights"]
     
-    if is_local_file:
-        # Local file path - use directly
-        resolved_path = lora_path
-        logInfo(f"📦 Using local LoRA file: {resolved_path}")
+    # Debug logging
+    logInfo(f"🔍 Checking LoRA path: {lora_path}")
+    logInfo(f"🔍 Looking for weights file: {weights_filename}")
+    
+    # Check if it's a local path (file or directory)
+    is_local = os.path.exists(lora_path)
+    logInfo(f"🔍 Path exists check: {is_local}")
+    
+    if is_local:
+        # Local path - could be direct file or directory containing weights
+        if os.path.isfile(lora_path):
+            # Direct path to .safetensors file
+            resolved_path = lora_path
+            logInfo(f"📦 Using local LoRA file: {resolved_path}")
+        elif os.path.isdir(lora_path):
+            # Directory containing weights - construct full path
+            resolved_path = os.path.join(lora_path, weights_filename)
+            logInfo(f"🔍 Constructed full path: {resolved_path}")
+            if not os.path.exists(resolved_path):
+                logError(f"❌ LoRA weights file not found: {resolved_path}")
+                raise FileNotFoundError(f"Weights file not found: {resolved_path}")
+            logInfo(f"📦 Using local LoRA from directory: {resolved_path}")
+        else:
+            logError(f"❌ Invalid local path (not a file or directory): {lora_path}")
+            raise ValueError(f"Invalid local path: {lora_path}")
     else:
         # HuggingFace repo - download from hub
+        logInfo(f"📥 Downloading LoRA from HuggingFace Hub: {lora_path}")
         try:
             resolved_path = hf_hub_download(
-                repo_id=lora_config["path"],
-                filename=lora_config["weights"],
+                repo_id=lora_path,
+                filename=weights_filename,
                 cache_dir=config["cache_dir"]
             )
             logInfo(f"📦 LoRA weights resolved to: {resolved_path}")
@@ -57,18 +79,19 @@ def apply_lora(pipeline, lora_config, config):
             logError(f"Failed to resolve LoRA weights: {e}")
             raise
 
-    # ✅ Load weights
-    if is_local_file:
-        logInfo(f"🎨 Loading LoRA weights from local file...")
+    # ✅ Load weights - use direct file path for local, or HF repo for remote
+    logInfo(f"🎨 Loading LoRA weights...")
+    if is_local:
+        # Local file - load directly with file path
         pipeline.load_lora_weights(
             resolved_path,
             adapter_name="lora"
         )
     else:
-        logInfo(f"🎨 Loading LoRA weights from HuggingFace Hub...")
+        # HuggingFace Hub - load with repo_id and weight_name
         pipeline.load_lora_weights(
-            lora_config["path"],
-            weight_name=lora_config["weights"],
+            lora_path,
+            weight_name=weights_filename,
             adapter_name="lora"
         )
     

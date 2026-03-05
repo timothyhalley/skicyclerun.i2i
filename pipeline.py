@@ -1716,6 +1716,46 @@ if __name__ == "__main__":
             logError(f"❌ Required environment variable(s) not set: {', '.join(missing_envs)}")
             logError("   Run: source ./env_setup.sh <images_root> [huggingface_cache] before executing the pipeline.")
             sys.exit(1)
+        
+        # Check HuggingFace authentication if lora_processing is requested
+        stages_to_check = args.stages
+        if stages_to_check and len(stages_to_check) == 1 and ',' in stages_to_check[0]:
+            stages_to_check = [s.strip() for s in stages_to_check[0].split(',')]
+        
+        if stages_to_check and 'lora_processing' in stages_to_check:
+            try:
+                from huggingface_hub import HfFolder
+                token = HfFolder.get_token()
+                if not token:
+                    logError("=" * 80)
+                    logError("🔐 HUGGINGFACE AUTHENTICATION REQUIRED")
+                    logError("=" * 80)
+                    logError("❌ Not logged in to HuggingFace. LoRA processing requires authentication.")
+                    logError("")
+                    logError("To authenticate:")
+                    logError("   1. Get your token from: https://huggingface.co/settings/tokens")
+                    logError("   2. Run: hf auth login")
+                    logError("   3. Paste your token when prompted")
+                    logError("")
+                    logError("To verify authentication:")
+                    logError("   hf auth whoami")
+                    logError("")
+                    logError("=" * 80)
+                    sys.exit(1)
+                else:
+                    # Silently authenticated - only show info if verbose
+                    if args.verbose:
+                        try:
+                            from huggingface_hub import HfApi
+                            api = HfApi()
+                            user_info = api.whoami()
+                            logInfo(f"✅ HuggingFace authenticated as: {user_info.get('name', 'Unknown')}")
+                        except:
+                            logInfo("✅ HuggingFace token found")
+            except ImportError:
+                logWarn("⚠️  Cannot verify HuggingFace authentication (huggingface_hub not installed)")
+            except Exception as e:
+                logWarn(f"⚠️  HuggingFace authentication check failed: {e}")
     
     runner = PipelineRunner(
         args.config,

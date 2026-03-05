@@ -6,6 +6,85 @@ Three-phase pipeline for processing photos from Apple Photos through LoRA artist
 
 ---
 
+## Prerequisites
+
+### 1. Environment Setup
+
+Set up required environment variables before running the pipeline:
+
+```bash
+source ./env_setup.sh /Volumes/MySSD/skicyclerun.i2i
+```
+
+This sets:
+
+- `SKICYCLERUN_LIB_ROOT` - Pipeline data root directory
+- `HUGGINGFACE_CACHE_LIB` / `HF_HOME` - HuggingFace model cache location
+
+### 2. Python Environment
+
+Ensure Python has blake2 hash support (required by HuggingFace libraries):
+
+```bash
+# Test blake2 support
+python -c "import hashlib; print('blake2b:', hashlib.blake2b); print('✅ blake2 working!')"
+```
+
+If blake2 is not working, reinstall Python with proper OpenSSL support:
+
+```bash
+bash fix_python_blake2.sh
+```
+
+### 3. HuggingFace Authentication
+
+**Required for downloading LoRA models from HuggingFace Hub.**
+
+#### Check if logged in:
+
+```bash
+hf auth whoami
+```
+
+#### If not logged in:
+
+1. **Get your HuggingFace token:**
+   - Visit: https://huggingface.co/settings/tokens
+   - Create a new token with `read` permissions
+   - Copy the token
+
+2. **Log in:**
+
+   ```bash
+   hf auth login
+   ```
+
+   - Paste your token when prompted
+   - Choose `Y` to save as git credential (optional but recommended)
+
+3. **Verify authentication:**
+   ```bash
+   hf auth whoami
+   ```
+   Should display: `user: YourUsername`
+
+#### Token Location
+
+Your token is saved to:
+
+- `~/.huggingface/token` (primary location)
+- `$HF_HOME/token` (if `HF_HOME` is set)
+- macOS Keychain (if you said yes to git credential)
+
+#### Notes
+
+- The pipeline will automatically check for HuggingFace authentication before running LoRA processing
+- If `local_files_only: false` in config, models will be downloaded from HuggingFace Hub
+- Downloaded models are cached in `$HUGGINGFACE_CACHE_LIB` for future use
+- After first download, you can set `local_files_only: true` to use cached models only
+
+---
+
 ## Folder Structure
 
 ```text
