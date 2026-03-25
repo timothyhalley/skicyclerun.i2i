@@ -3,6 +3,7 @@ Geolocation Metadata Extractor
 Extracts GPS coordinates from EXIF and reverse geocodes to human-readable locations
 """
 import json
+import os
 import time
 from datetime import datetime
 from utils.time_utils import utc_now_iso_z, infer_utc_from_local_naive
@@ -11,6 +12,7 @@ from typing import Optional, Dict, Tuple, List
 import requests
 from PIL import Image
 from PIL.ExifTags import TAGS, GPSTAGS
+from .poi_osm_queries import get_nearby_interesting_pois, get_natural_context_pois, _merge_poi_lists
 
 class GeoExtractor:
     def __init__(self, config: Dict):
@@ -23,23 +25,88 @@ class GeoExtractor:
         self.user_agent = self.geocoding_config.get('user_agent', 'SkiCycleRun/1.0')
         self.last_request_time = 0
         self.cache = self._load_cache()
-        # POI enrichment settings (Overpass)
+        # POI enrichment config.
+        # POIs are cached in geocode_cache.json and intentionally NOT written to master.json.
         poi_cfg = config.get('metadata_extraction', {}).get('poi_enrichment', {})
         self.poi_enabled = poi_cfg.get('enabled', False)
-        self.poi_radius_m = int(poi_cfg.get('radius_m', 500))
+        self.poi_radius_m = int(poi_cfg.get('radius_m', 50))
+        progressive = poi_cfg.get('progressive_radii_m', [self.poi_radius_m, 120, 250])
+        self.poi_progressive_radii: List[int] = sorted({max(10, int(r)) for r in progressive if r})
+        if not self.poi_progressive_radii:
+            self.poi_progressive_radii = [self.poi_radius_m]
         self.poi_max_results = int(poi_cfg.get('max_results', 5))
         self.poi_timeout_s = int(poi_cfg.get('timeout_seconds', 15))
-        self.overpass_url = poi_cfg.get('overpass_url', 'https://overpass-api.de/api/interpreter')
-        self.poi_allowed_categories: List[str] = [
-            c.lower() for c in poi_cfg.get('categories', [
-                'museum','attraction','viewpoint','historic','natural'
-            ])
+        self.places_api_url = poi_cfg.get('places_api_url', 'https://maps.googleapis.com/maps/api/place/nearbysearch/json')
+        self.poi_request_delay_s = float(poi_cfg.get('request_delay_seconds', 2.0))
+        self.poi_rate_limit_backoff_s = int(poi_cfg.get('rate_limit_backoff_seconds', 60))
+        self.last_poi_request_time = 0.0
+        self.poi_backoff_until = 0.0
+        self.last_poi_fetch_status = 'not_attempted'
+        configured_categories = [c.lower() for c in poi_cfg.get('categories', []) if c]
+        # If categories is empty, use a default "worthy" allow-list.
+        self.poi_allowed_categories: List[str] = configured_categories or [
+            'lodging',
+            'restaurant', 'cafe', 'pub', 'marketplace',
+            'park', 'trailhead', 'beach',
+            'mountain', 'peak', 'volcano', 'ridge', 'hill', 'natural', 'waterfall',
+            'historic', 'memorial', 'monument', 'castle', 'ruins', 'archaeological_site',
+            'museum', 'gallery', 'attraction', 'viewpoint', 'national_park', 'protected_area',
+            'lighthouse', 'bridge'
         ]
-        self.poi_use_heading = bool(poi_cfg.get('use_heading_filter', True))
-        self.poi_fov_deg = float(poi_cfg.get('fov_degrees', 60))  # visible cone centered on heading
+        # Map configured categories to equivalent Google type values.
+        # This avoids false negatives when config uses broader labels
+        # (e.g. "attraction") but Google returns "tourist_attraction".
+        self.poi_category_aliases = {
+            'lodging': {'hotel', 'motel', 'rv_park', 'resort'},
+            'attraction': {'tourist_attraction'},
+            'viewpoint': {'scenic_lookout'},
+            'historic': {'historical_landmark'},
+            'park': {'campground', 'natural_feature'},
+            'trailhead': {'hiking_area', 'natural_feature', 'park'},
+            'protected_area': {'park', 'beach', 'campground', 'natural_feature', 'hiking_area'},
+            'national_park': {'park', 'natural_feature'},
+            'mountain': {'natural_feature'},
+            'waterfall': {'natural_feature'},
+            'marketplace': {'shopping_mall', 'market'},
+        }
+        # Bump when POI query behavior changes; used to invalidate stale cache entries.
+        self.poi_query_version = 'v8_overpass_progressive_radius'
+        # Exclusions for low-value or clearly irrelevant places for watermark context.
+        self.poi_excluded_type_tokens = {
+            'toilet', 'restroom', 'bathroom', 'public_bath', 'public_toilet',
+            'car_repair', 'car_dealer', 'gas_station', 'parking', 'car_wash', 'tire_shop', 'auto_repair_shop',
+            'storage', 'post_office', 'funeral_home', 'cemetery',
+            'grocery_or_supermarket', 'supermarket', 'convenience_store', 'department_store',
+            'bank', 'atm', 'subway_station', 'bus_station', 'transit_station',
+            'laundry', 'dry_cleaning', 'hair_care', 'store', 'shopping_mall'
+        }
+        self.poi_excluded_name_tokens = {
+            'toilet', 'restroom', 'washroom', 'public toilet', 'porta potty', 'portable toilet',
+            'tire', 'auto repair', 'car wash', 'gas station', 'superstore', 'grocery', 'costco', 'walmart',
+            'atm', 'bank', 'laundromat'
+        }
+        # Exclude ad/listing style names that are not meaningful POIs for watermarking.
+        self.poi_listing_noise_tokens = {
+            'monthly rates', 'rates negotiable', 'luxury condo', 'corner-suite',
+            'make yourself at home', 'sq.ft', 'pets ok', 'pet friendly',
+            'book now', 'airbnb', 'vrbo', 'short term rental'
+        }
+        self.poi_use_heading = bool(poi_cfg.get('use_heading_filter', False))
+        self.poi_fov_deg = float(poi_cfg.get('fov_degrees', 60))
         self.poi_max_distance_m = int(poi_cfg.get('max_distance_m', self.poi_radius_m))
         self.poi_heading_weight = float(poi_cfg.get('heading_weight', 0.7))
         self.poi_distance_weight = float(poi_cfg.get('distance_weight', 0.3))
+
+    def _get_google_places_api_key(self) -> Optional[str]:
+        """Load Google Places API key from config or environment."""
+        poi_cfg = self.config.get('metadata_extraction', {}).get('poi_enrichment', {})
+        geocoding_cfg = self.config.get('metadata_extraction', {}).get('geocoding', {})
+        return (
+            poi_cfg.get('google_api_key') or
+            geocoding_cfg.get('google_api_key') or
+            os.getenv('GOOGLE_MAPS_API_KEY') or
+            os.getenv('GOOGLE_PLACES_API_KEY')
+        )
         
     def _load_cache(self) -> Dict:
         """Load geocoding cache from disk"""
@@ -50,10 +117,48 @@ class GeoExtractor:
         if cache_path.exists():
             try:
                 with open(cache_path, 'r') as f:
-                    return json.load(f)
+                    raw = json.load(f)
+                return self._normalize_cache_schema(raw)
             except Exception as e:
                 print(f"Warning: Could not load cache: {e}")
         return {}
+
+    def _normalize_cache_schema(self, raw_cache: Dict) -> Dict:
+        """Normalize legacy cache records without writing to master.json."""
+        if not isinstance(raw_cache, dict):
+            return {}
+
+        normalized = {}
+        for key, entry in raw_cache.items():
+            if not isinstance(entry, dict):
+                continue
+
+            e = dict(entry)
+
+            photos = e.get('photos', [])
+            if isinstance(photos, list):
+                e['photos'] = sorted({str(p) for p in photos if p})
+
+            nearby_pois = e.get('nearby_pois')
+            poi_search = e.get('poi_search')
+            if isinstance(poi_search, dict):
+                if nearby_pois is None:
+                    nearby_pois = []
+                    e['nearby_pois'] = nearby_pois
+                if 'result_count' not in poi_search:
+                    poi_search['result_count'] = len(nearby_pois)
+                if 'status' not in poi_search:
+                    if nearby_pois:
+                        poi_search['status'] = 'success'
+                        poi_search['error'] = None
+                    else:
+                        poi_search['status'] = 'legacy_unknown'
+                        poi_search['error'] = 'legacy_unknown'
+                e['poi_search'] = poi_search
+
+            normalized[key] = e
+
+        return normalized
     
     def _save_cache(self):
         """Save geocoding cache to disk"""
@@ -150,6 +255,7 @@ class GeoExtractor:
             # Strip POI fields from cached data (they belong in separate cache fields)
             location_info.pop('nearby_pois', None)
             location_info.pop('poi_search', None)
+            location_info.pop('photos', None)
             return location_info
 
         # Dev mode: cache-only short circuit
@@ -309,10 +415,17 @@ class GeoExtractor:
                 namedetails = data.get('namedetails') or {}
                 extratags = data.get('extratags') or {}
                 
-                # Check if this is a POI (has a name and is not just a street/area)
+                # Check if this is a real POI and not a named road/administrative feature.
                 osm_type = data.get('type', '')
+                osm_category = data.get('category', '')
                 has_name = bool(namedetails.get('name'))
-                is_poi = has_name and osm_type not in ['residential', 'road', 'path', 'track', 'footway', 'cycleway', 'tertiary', 'secondary', 'primary']
+                non_poi_types = {
+                    'residential', 'road', 'path', 'track', 'footway', 'cycleway',
+                    'tertiary', 'secondary', 'primary', 'unclassified', 'service',
+                    'living_street', 'pedestrian'
+                }
+                non_poi_categories = {'highway', 'boundary', 'place', 'landuse'}
+                is_poi = has_name and osm_category not in non_poi_categories and osm_type not in non_poi_types
                 
                 return {
                     'city': address.get('city') or address.get('town') or address.get('village') or address.get('hamlet') or address.get('suburb'),
@@ -325,7 +438,7 @@ class GeoExtractor:
                     'lon': lon,
                     'osm_type': data.get('osm_type'),
                     'osm_id': data.get('osm_id'),
-                    'category': data.get('category'),
+                    'category': osm_category,
                     'type': data.get('type'),
                     'poi_found': is_poi,
                     'provider': 'nominatim',
@@ -427,134 +540,168 @@ class GeoExtractor:
         
         return None
 
-    def fetch_pois(self, lat: float, lon: float, heading_deg: Optional[float] = None) -> List[Dict]:
-        """EXACT COPY from debug/test_ollama_structured.py search_nearby_pois() - 3 weeks of tuning!
-        
-        DO NOT MODIFY - this is the proven working version!
+    def _should_refresh_cached_pois(self, cached_data: Dict) -> bool:
+        """Decide whether cached POI data should be refreshed.
+
+        Retry empty legacy caches and transient failures, but keep stable empty results.
         """
+        nearby_pois = cached_data.get('nearby_pois')
+        poi_search = cached_data.get('poi_search') or {}
+        status = poi_search.get('status')
+        error = poi_search.get('error')
+
+        if nearby_pois is None or 'poi_search' not in cached_data:
+            return True
+
+        # Refresh when POI query strategy changed (radius/categories),
+        # so stale wide-radius results don't stick forever.
+        cached_radius = poi_search.get('search_radius_m')
+        cached_categories = poi_search.get('categories') or []
+        cached_query_version = poi_search.get('query_version')
+        if cached_radius is not None and int(cached_radius) != int(self.poi_radius_m):
+            return True
+        if set(map(str, cached_categories)) != set(map(str, self.poi_allowed_categories)):
+            return True
+        if cached_query_version != self.poi_query_version:
+            return True
+
+        if nearby_pois:
+            return False
+
+        retryable_statuses = {
+            None,
+            'legacy_unknown',
+            'rate_limited',
+            'backoff_active',
+            'timeout',
+            'missing_api_key',
+            'api_forbidden',
+            'api_unavailable',
+            'request_error',
+        }
+        return status in retryable_statuses or error in retryable_statuses
+
+    def _is_excluded_place(self, place: Dict) -> bool:
+        """Return True for low-value places we never want in watermark context."""
+        types = [str(t).lower() for t in (place.get('types') or [])]
+        name = (place.get('name') or '').lower()
+        vicinity = (place.get('vicinity') or '').lower()
+        haystack = f"{name} {vicinity}"
+
+        if any(tok in types for tok in self.poi_excluded_type_tokens):
+            return True
+        if any(tok in haystack for tok in self.poi_excluded_name_tokens):
+            return True
+        if any(tok in haystack for tok in self.poi_listing_noise_tokens):
+            return True
+        # Heuristic: very long promo-like names with pricing/symbol noise are usually listings.
+        if len(name) > 72 and any(sym in name for sym in ['$', '@']):
+            return True
+        return False
+
+    def _match_allowed_category(self, google_types: List[str], place: Optional[Dict] = None, query_category: Optional[str] = None) -> Optional[str]:
+        """Return configured category that matches Google types, using alias map."""
+        for gtype in google_types:
+            if gtype in self.poi_allowed_categories:
+                return gtype
+
+        # Alias-based matching: configured category -> equivalent Google types.
+        for configured in self.poi_allowed_categories:
+            aliases = self.poi_category_aliases.get(configured, set())
+            if any(gtype in aliases for gtype in google_types):
+                return configured
+
+        # Last-chance token match for mild naming variance.
+        for gtype in google_types:
+            for configured in self.poi_allowed_categories:
+                if configured in gtype or gtype in configured:
+                    return configured
+
+        # Query-context fallback: for natural/outdoor categories, Google often
+        # returns generic types only; use name/vicinity hints before discarding.
+        if place and query_category:
+            hay = f"{(place.get('name') or '').lower()} {(place.get('vicinity') or '').lower()}"
+            query_hints = {
+                'trailhead': ['trail', 'trailhead', 'hike', 'hiking'],
+                'park': ['park'],
+                'protected_area': ['park', 'reserve', 'conservation', 'landing', 'nature'],
+                'national_park': ['national park', 'park'],
+                'beach': ['beach'],
+                'mountain': ['mountain', 'mt '],
+                'peak': ['peak'],
+                'waterfall': ['waterfall', 'falls'],
+            }
+            hints = query_hints.get(query_category, [])
+            if any(h in hay for h in hints):
+                return query_category
+        return None
+
+    def fetch_pois(self, lat: float, lon: float, heading_deg: Optional[float] = None) -> List[Dict]:
+        """Fetch nearby POIs from Overpass using progressive radius strategy."""
+        self.last_poi_fetch_status = 'not_attempted'
         if not self.poi_enabled:
+            self.last_poi_fetch_status = 'disabled'
             return []
-        
-        radius_m = self.poi_radius_m
-        
-        # EXACT query from debug script
-        query = f"""
-    [out:json][timeout:25];
-    (
-      nwr["tourism"](around:{radius_m},{lat},{lon});
-      nwr["historic"](around:{radius_m},{lat},{lon});
-      nwr["leisure"](around:{radius_m},{lat},{lon});
-      nwr["natural"](around:{radius_m},{lat},{lon});
-      nwr["waterway"](around:{radius_m},{lat},{lon});
-      nwr["boundary"~"protected_area|national_park"](around:{radius_m},{lat},{lon});
-      nwr["railway"~"station|subway_entrance|rail"](around:{radius_m},{lat},{lon});
-      nwr["station"="subway"](around:{radius_m},{lat},{lon});
-      nwr["public_transport"="station"](around:{radius_m},{lat},{lon});
-      nwr["amenity"~"place_of_worship|theatre|arts_centre|library|restaurant|cafe|bar|pub|marketplace"](around:{radius_m},{lat},{lon});
-      nwr["man_made"~"lighthouse|tower|windmill|bridge|monument|obelisk|clock"](around:{radius_m},{lat},{lon});
-      nwr["building"~"church|temple|mosque|shrine|cathedral|castle|palace|fort|ruins"](around:{radius_m},{lat},{lon});
-      nwr["route"~"hiking|bicycle"](around:{radius_m},{lat},{lon});
-      nwr["shop"](around:{radius_m},{lat},{lon});
-    );
-    out tags center;
-    """
-        
-        # EXACT logic from debug script - try multiple servers with fallback
-        overpass_urls = [
-            "https://overpass-api.de/api/interpreter",
-            "https://overpass.kumi.systems/api/interpreter",
-            "https://overpass.openstreetmap.fr/api/interpreter"
-        ]
-        
-        for overpass_url in overpass_urls:
-            try:
-                server_name = overpass_url.split('//')[1].split('/')[0]
-                print(f"   🔄 Trying {server_name}")
-                response = requests.post(overpass_url, data=query, timeout=30)
-                
-                if response.status_code == 200:
-                    data = response.json()
-                    elements = data.get('elements', [])
-                    
-                    pois = []
-                    seen_names = set()
-                    for elem in elements:
-                        tags = elem.get('tags', {})
-                        name = tags.get('name', 'Unnamed')
-                        
-                        if name == 'Unnamed' or name in seen_names:
-                            continue
-                        
-                        seen_names.add(name)
-                        
-                        # Get POI coordinates
-                        poi_lat = None
-                        poi_lon = None
-                        if elem.get('type') == 'node':
-                            poi_lat = elem.get('lat')
-                            poi_lon = elem.get('lon')
-                        elif 'center' in elem:
-                            poi_lat = elem['center'].get('lat')
-                            poi_lon = elem['center'].get('lon')
-                        
-                        if poi_lat is None or poi_lon is None:
-                            continue
-                        
-                        # Calculate distance - EXACT from debug script
-                        distance_m = self._calculate_distance_exact(lat, lon, poi_lat, poi_lon)
-                        
-                        # Simple classification - EXACT from debug script
-                        if 'tourism' in tags:
-                            classification = tags['tourism']
-                        elif 'historic' in tags:
-                            classification = tags['historic']
-                        elif tags.get('amenity') == 'clock' or tags.get('man_made') == 'clock':
-                            classification = 'clock'
-                        else:
-                            classification = 'landmark'
-                        
-                        pois.append({
-                            'name': name,
-                            'category': classification,
-                            'distance_m': round(distance_m, 1),
-                            'bearing_deg': None,  # Not used in debug script
-                            'bearing_cardinal': None,  # Not used in debug script
-                            'wikidata': tags.get('wikidata')
-                        })
-                    
-                    # Sort by distance (closest first) and limit to top 5 - EXACT from debug script
-                    pois.sort(key=lambda x: x['distance_m'])
-                    pois = pois[:5]
-                    
-                    print(f"   ✅ Found {len(pois)} unique POIs (sorted by distance)")
-                    return pois
-                    
-                elif response.status_code == 504:
-                    print(f"   ⏳ Server timeout, trying next...")
-                    time.sleep(2)
-                    continue
+
+        # Keep spacing between batches to avoid hammering Overpass.
+        elapsed = time.time() - self.last_poi_request_time
+        if elapsed < self.poi_request_delay_s:
+            time.sleep(self.poi_request_delay_s - elapsed)
+
+        print(f"   🔄 Overpass nearby search (radii: {self.poi_progressive_radii})")
+
+        try:
+            pois: List[Dict] = []
+            for radius_m in self.poi_progressive_radii:
+                primary = get_nearby_interesting_pois(lat, lon, radius_m=radius_m)
+                if primary:
+                    merged = primary
                 else:
-                    # Other HTTP errors - try next server after brief delay
-                    # HTTP 429 = rate limiting, need longer delay
-                    if response.status_code == 429:
-                        print(f"   ⚠️  HTTP 429 (Rate Limited), trying next...")
-                        time.sleep(5)  # Longer delay for rate limiting
-                    else:
-                        print(f"   ⚠️  HTTP {response.status_code}, trying next...")
-                        time.sleep(2)
-                    continue
-                    
-            except requests.exceptions.Timeout:
-                print(f"   ⏳ Connection timeout, trying next...")
-                time.sleep(2)
-                continue
-            except Exception as e:
-                print(f"   ⚠️  Error: {e}, trying next...")
-                time.sleep(1)
-                continue
-        
-        print(f"   ❌ POI search failed on all servers")
-        return []
+                    natural = get_natural_context_pois(lat, lon, radius_m=max(radius_m, 250))
+                    merged = _merge_poi_lists(primary, natural)
+
+                # Filter to allowed categories when configured.
+                if self.poi_allowed_categories:
+                    allowed = set(self.poi_allowed_categories)
+                    filtered = [p for p in merged if (p.get('type') or '').lower() in allowed]
+                    # Fallback to merged if filtering removed everything; keeps robust defaults.
+                    merged = filtered or merged
+
+                # GeoExtractor cache schema historically uses `category` for POI type.
+                normalized: List[Dict] = []
+                for poi in merged:
+                    poi_type = (poi.get('type') or '').lower()
+                    normalized.append({
+                        'name': poi.get('name', 'Unnamed'),
+                        'category': poi_type,
+                        'type': poi_type,
+                        'distance_m': round(float(poi.get('distance_m') or 0), 1),
+                        'bearing_deg': poi.get('bearing_deg'),
+                        'bearing_cardinal': poi.get('bearing_cardinal'),
+                        'wikidata': (poi.get('tags') or {}).get('wikidata'),
+                    })
+
+                normalized.sort(key=lambda x: x['distance_m'])
+                pois = normalized[:self.poi_max_results]
+
+                print(f"   --> POI @ {radius_m}m")
+                if pois:
+                    print(f"      {[p.get('name') for p in pois]}")
+                    print(f"      ✅ Relevant local POIs found at {radius_m}m; skipping larger radii")
+                    break
+                print("      []")
+                print(f"      ⏭️  No relevant POIs at {radius_m}m; trying next radius")
+
+            self.last_poi_request_time = time.time()
+            self.last_poi_fetch_status = 'success' if pois else 'no_pois_found'
+            print(f"   ✅ Overpass returned {len(pois)} POIs")
+            return pois
+        except requests.exceptions.Timeout:
+            self.last_poi_fetch_status = 'timeout'
+            return []
+        except Exception:
+            self.last_poi_fetch_status = 'request_error'
+            return []
     
     def _calculate_distance_exact(self, lat1: float, lon1: float, lat2: float, lon2: float) -> float:
         """EXACT distance calculation from debug/test_ollama_structured.py calculate_distance()"""
@@ -880,6 +1027,7 @@ class GeoExtractor:
             metadata['gps'] = gps_data
             
             lat, lon = gps_data['lat'], gps_data['lon']
+            cache_key = f"{lat:.6f},{lon:.6f}"
             
             # If we have a local date and GPS, infer UTC capture time
             if metadata.get('date_taken'):
@@ -887,64 +1035,44 @@ class GeoExtractor:
                 if inferred:
                     metadata['date_taken_utc'] = inferred
 
-            # Reverse geocode to get location (GEOCODING RESULT - not EXIF!)
+            # Reverse geocode to get location (city / state / country)
             location_info = self.reverse_geocode(lat, lon)
             if location_info:
-                # Add formatted string to location node for clean organization
                 location_info['formatted'] = self.format_location(location_info)
                 metadata['location'] = location_info
-                
-                # POI enrichment: Check cache first, then fetch if needed
-                # Store POI data in geocode_cache.json keyed by lat/lon to avoid duplicate API calls
-                cache_key = f"{lat:.6f},{lon:.6f}"
+
+            # Track which photos map to each coordinate in geocode_cache.json.
+            # This stays out of master.json and helps validate duplicate geolocation clusters.
+            if self.cache_enabled:
                 cached_data = self.cache.get(cache_key, {})
-                
-                # Check if we have cached POI data
-                if 'nearby_pois' in cached_data and 'poi_search' in cached_data:
-                    # POI data already cached - no need to fetch or store in metadata
-                    # master.json will reference geocode_cache.json by GPS coordinates
-                    pass
-                else:
-                    # No cached POI data - fetch from Overpass API
-                    nearby_pois = []
-                    search_metadata = {
-                        'attempted': self.poi_enabled,
-                        'search_radius_m': self.poi_radius_m if self.poi_enabled else None,
-                        'max_distance_m': self.poi_max_distance_m if self.poi_enabled else None,
-                        'heading_filter_used': self.poi_use_heading and gps_data.get('heading') is not None if self.poi_enabled else False,
-                        'error': None
-                    }
-                    
-                    # Add geocoder result as POI at distance 0 (if it found a named place)
-                    if location_info.get('name') and location_info.get('type'):
-                        nearby_pois.append({
-                            'name': location_info['name'],
-                            'category': location_info.get('type'),
-                            'distance_m': 0,
-                            'bearing_deg': None,
-                            'bearing_cardinal': None,
-                            'wikidata': None,
-                            'source': 'geocoder'
-                        })
-                    
-                    # Fetch additional POIs from Overpass API
-                    if self.poi_enabled:
-                        try:
-                            heading_deg = gps_data.get('heading')
-                            overpass_pois = self.fetch_pois(lat, lon, heading_deg=heading_deg)
-                            for poi in overpass_pois:
-                                poi['source'] = 'overpass'
-                                nearby_pois.append(poi)
-                            
-                            # Be respectful to Overpass API - add 2 second delay after each request to avoid rate limiting (HTTP 429)
-                            time.sleep(2)
-                        except Exception as e:
-                            search_metadata['error'] = str(e)
-                    
-                    # Store POI data ONLY in geocode cache - not in metadata/master.json
-                    # master.json will reference geocode_cache.json by GPS coordinates
+                photos = cached_data.get('photos', [])
+                photo_name = Path(image_path).name
+                if photo_name not in photos:
+                    photos.append(photo_name)
+                    photos.sort()
+                cached_data['photos'] = photos
+                self.cache[cache_key] = cached_data
+                self._save_cache()
+
+            # Optional POI enrichment for programmatic watermark context.
+            # Stored ONLY in geocode_cache.json (never in master.json).
+            if self.poi_enabled and self.cache_enabled:
+                cached_data = self.cache.get(cache_key, {})
+                if self._should_refresh_cached_pois(cached_data):
+                    nearby_pois = self.fetch_pois(lat, lon, heading_deg=gps_data.get('heading'))
+                    poi_status = self.last_poi_fetch_status or 'legacy_unknown'
                     cached_data['nearby_pois'] = nearby_pois
-                    cached_data['poi_search'] = search_metadata
+                    cached_data['poi_search'] = {
+                        'attempted': True,
+                        'search_radius_m': self.poi_radius_m,
+                        'search_radii_m': self.poi_progressive_radii,
+                        'query_version': self.poi_query_version,
+                        'max_results': self.poi_max_results,
+                        'categories': self.poi_allowed_categories,
+                        'status': poi_status,
+                        'result_count': len(nearby_pois),
+                        'error': None if nearby_pois else poi_status
+                    }
                     self.cache[cache_key] = cached_data
                     self._save_cache()
         

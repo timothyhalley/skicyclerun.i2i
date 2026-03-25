@@ -258,6 +258,31 @@ class WatermarkApplicator:
             lines.append(' '.join(current_line))
         
         return lines if lines else [text]
+
+    def _fit_text_block(self, draw, text: str, start_size: int, min_size: int, max_width: int, line_spacing: int) -> tuple:
+        """Fit text into max width by shrinking then wrapping as needed."""
+        size = max(start_size, min_size)
+        font = self._get_font(size)
+
+        while size > min_size:
+            bbox = draw.textbbox((0, 0), text, font=font)
+            if (bbox[2] - bbox[0]) <= max_width:
+                break
+            size -= 1
+            font = self._get_font(size)
+
+        bbox = draw.textbbox((0, 0), text, font=font)
+        if (bbox[2] - bbox[0]) > max_width:
+            lines = self._wrap_text_smart(text, draw, font, max_width)
+        else:
+            lines = [text]
+
+        heights = []
+        for line in lines:
+            lb = draw.textbbox((0, 0), line, font=font)
+            heights.append(lb[3] - lb[1])
+        total_h = sum(heights) + (len(lines) - 1) * max(1, line_spacing // 2)
+        return lines, font, heights, total_h
     
     def apply_watermark(self, image_path: str, line1_text: str, line2_text: str, output_path: str):
         """
@@ -312,10 +337,16 @@ class WatermarkApplicator:
         copy_config = self.watermark_config.get('copyright_line', {})
         line_spacing = self.watermark_config.get('line_spacing', 8)
         
-        # LINE 1: LLM watermark (passed in)
+        # LINE 1: contextual watermark text
         location_text = line1_text.strip() if line1_text else None
+        # Keep line 1 concise for readability and clipping safety.
+        max_words_line1 = int(self.watermark_config.get('line1_max_words', 10))
+        if location_text:
+            words = location_text.split()
+            if len(words) > max_words_line1:
+                location_text = ' '.join(words[:max_words_line1]).rstrip(',')
         
-        # LINE 2: Location + copyright (passed in)
+        # LINE 2: Programmatic location line
         copyright_text = line2_text.strip()
         
         # Get fonts and sizing
@@ -325,48 +356,37 @@ class WatermarkApplicator:
         margin_x = self.margin.get('x', 50)
         margin_y = self.margin.get('y', 40)
         
-        # Process LINE 1 (LLM watermark) if available
+        # Process LINE 1
         loc_lines = []
         loc_line_heights = []
         loc_total_height = 0
         
         if location_text:
-            absolute_min_size = 16
-            loc_font = self._get_font(loc_size)
-            
-            # Try shrinking font to fit
-            while loc_size > absolute_min_size:
-                bbox = draw.textbbox((0, 0), location_text, font=loc_font)
-                if (bbox[2] - bbox[0]) <= max_width:
-                    break
-                loc_size -= 1
-                loc_font = self._get_font(loc_size)
-            
-            # Check final width and wrap if needed
-            bbox = draw.textbbox((0, 0), location_text, font=loc_font)
-            if (bbox[2] - bbox[0]) > max_width:
-                # Still too wide after shrinking - must wrap to multiple lines
-                loc_lines = self._wrap_text_smart(location_text, draw, loc_font, max_width)
-            else:
-                # Fits on single line
-                loc_lines = [location_text]
-            
-            # Measure each line
-            for line in loc_lines:
-                bbox = draw.textbbox((0, 0), line, font=loc_font)
-                loc_line_heights.append(bbox[3] - bbox[1])
-            
-            loc_total_height = sum(loc_line_heights) + (len(loc_lines) - 1) * (line_spacing // 2)
+            absolute_min_size = int(loc_config.get('min_size', 16))
+            loc_lines, loc_font, loc_line_heights, loc_total_height = self._fit_text_block(
+                draw,
+                location_text,
+                loc_size,
+                absolute_min_size,
+                max_width,
+                line_spacing,
+            )
         
-        # Process LINE 2 (Copyright)
-        copy_font = self._get_font(copy_size)
-        copy_bbox = draw.textbbox((0, 0), copyright_text, font=copy_font)
-        copy_width = copy_bbox[2] - copy_bbox[0]
-        copy_height = copy_bbox[3] - copy_bbox[1]
+        # Process LINE 2 (always fit/wrap too)
+        copy_min_size = int(copy_config.get('min_size', 12))
+        copy_lines, copy_font, copy_line_heights, copy_total_height = self._fit_text_block(
+            draw,
+            copyright_text,
+            copy_size,
+            copy_min_size,
+            max_width,
+            line_spacing,
+        )
         
         # Calculate total height and position
-        total_height = loc_total_height + (line_spacing if location_text else 0) + copy_height
+        total_height = loc_total_height + (line_spacing if location_text else 0) + copy_total_height
         base_y = image_size[1] - total_height - margin_y
+        base_y = max(margin_y, base_y)
         
         # Draw LINE 1 (LLM watermark) if available
         loc_y = base_y
@@ -387,13 +407,16 @@ class WatermarkApplicator:
             
             loc_y += line_spacing
         
-        # Draw LINE 2 (Copyright)
-        copy_x = image_size[0] - copy_width - margin_x
-        copy_y = loc_y
-        
+        # Draw LINE 2
         copy_color = tuple(copy_config.get('color', [255, 255, 255, 180]))
         copy_stroke = tuple(copy_config.get('stroke_color', [0, 0, 0, 200]))
         copy_stroke_width = copy_config.get('stroke_width', 2)
-        
-        draw.text((copy_x, copy_y), copyright_text, font=copy_font, fill=copy_color,
-                 stroke_width=copy_stroke_width, stroke_fill=copy_stroke, embedded_color=True)
+
+        copy_y = loc_y
+        for i, line in enumerate(copy_lines):
+            cb = draw.textbbox((0, 0), line, font=copy_font)
+            copy_width = cb[2] - cb[0]
+            copy_x = image_size[0] - copy_width - margin_x
+            draw.text((copy_x, copy_y), line, font=copy_font, fill=copy_color,
+                     stroke_width=copy_stroke_width, stroke_fill=copy_stroke, embedded_color=True)
+            copy_y += copy_line_heights[i] + (line_spacing // 2 if i < len(copy_lines) - 1 else 0)

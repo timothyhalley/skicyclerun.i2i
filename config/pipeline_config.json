@@ -6,7 +6,6 @@
       "export",
       "cleanup",
       "metadata_extraction",
-      "llm_image_analysis",
       "preprocessing",
       "lora_processing",
       "post_lora_watermarking",
@@ -61,11 +60,36 @@
     },
     "poi_enrichment": {
       "enabled": true,
-      "radius_m": 300,
+      "_comment": "POIs are fetched from Google Places during metadata_extraction and stored in geocode_cache.json only (not master.json).",
+      "radius_m": 50,
+      "progressive_radii_m": [50, 120, 250],
       "max_results": 5,
-      "timeout_seconds": 25,
-      "overpass_url": "https://overpass-api.de/api/interpreter",
-      "categories": [],
+      "timeout_seconds": 10,
+      "places_api_url": "https://maps.googleapis.com/maps/api/place/nearbysearch/json",
+      "request_delay_seconds": 0.25,
+      "rate_limit_backoff_seconds": 60,
+      "categories": [
+        "lodging",
+        "restaurant",
+        "cafe",
+        "marketplace",
+        "park",
+        "trailhead",
+        "beach",
+        "mountain",
+        "peak",
+        "volcano",
+        "waterfall",
+        "historic",
+        "memorial",
+        "monument",
+        "museum",
+        "gallery",
+        "attraction",
+        "viewpoint",
+        "national_park",
+        "protected_area"
+      ],
       "use_heading_filter": false,
       "fov_degrees": 60,
       "max_distance_m": 0,
@@ -84,9 +108,14 @@
   },
   "watermark": {
     "enabled": true,
+    "bilingual_output": true,
     "layout": "two_line",
-    "_comment_line1": "LINE 1 comes from llm_image_analysis.programmatic_watermark (landmark + location + copyright)",
-    "_comment_line2": "LINE 2 is built from location.formatted + copyright_line.format",
+    "_comment_line1": "LINE 1 comes from nearby POI category templates (clean/scenic/minimal)",
+    "_comment_line2": "LINE 2 is programmatic_watermark (concise location, no postal code)",
+    "line1_style": "clean",
+    "line1_max_words": 10,
+    "line1_poi_max_distance_m": 120,
+    "line1_style_options": ["clean", "scenic", "minimal"],
     "location_line": {
       "_comment": "Settings for LINE 1 (programmatic watermark: landmark + city/region + state/country + copyright)",
       "font_size": 28,
@@ -97,7 +126,7 @@
     },
     "copyright_line": {
       "_comment": "Settings for LINE 2 (location + copyright)",
-      "format": "SkiCycleRun © {year} {symbol}",
+      "format": "{symbol} SkiCycleRun © {year}",
       "font_size": 16,
       "min_size": 12,
       "color": [255, 255, 255, 180],
@@ -160,68 +189,8 @@
     "negative_prompt": ""
   },
   "llm_image_analysis": {
-    "enabled": true,
-    "endpoint": "http://localhost:11434",
-    "model": "devstral-small-2:24b",
-    "timeout": 300,
-    "fallback_on_error": true,
-    "_comment": "Enhanced 6-stage Ollama pipeline (poi_research -> vision analysis -> content generation)",
-    "poi_research_model": "ministral-3:8b",
-    "poi_research_temperature": 0.3,
-    "poi_research_tokens": 250,
-    "vision_model": "devstral-small-2:24b",
-    "vision_temperature": 0.3,
-    "vision_tokens": 500,
-    "vision_timeout": 300,
-    "content_model": "mixtral:8x7b",
-    "content_temperature": 0.7,
-    "content_top_p": 0.9,
-    "content_tokens": 500,
-    "content_timeout": 300,
-    "prompt_template": "config/ollama_prompt_template.txt",
-    "activity_prompt_template": "config/ollama_image_analysis_template.txt",
-    "writing_styles": [
-      {
-        "author": "Ernest Hemingway",
-        "style": "Use extremely short sentences. Simple words. Direct and powerful. No flowery language. State facts. Create tension through brevity."
-      },
-      {
-        "author": "Mark Twain",
-        "style": "Folksy and conversational with dry wit. Use colloquialisms and regional speech patterns. Add ironic observations about human nature."
-      },
-      {
-        "author": "Edgar Allan Poe",
-        "style": "Use gothic, ominous vocabulary. Build atmosphere with dark imagery. Create mood through descriptive language about shadows, depths, mystery."
-      },
-      {
-        "author": "Jack Kerouac",
-        "style": "Stream of consciousness flow. Long, breathless sentences. Jazz-like rhythm. Spontaneous and unfiltered observations strung together."
-      },
-      {
-        "author": "Oscar Wilde",
-        "style": "Employ paradox and irony. Make clever, unexpected comparisons. Use elegant syntax with a satirical edge."
-      },
-      {
-        "author": "Raymond Chandler",
-        "style": "Hard-boiled detective style. Use similes comparing things to tough, gritty urban imagery. Cynical observations. Short declarative sentences."
-      },
-      {
-        "author": "Dr. Seuss",
-        "style": "Use simple rhyming couplets. Create made-up whimsical words. Repeat sounds and phrases. Keep rhythm bouncy and playful."
-      },
-      {
-        "author": "Shakespeare",
-        "style": "Use elevated diction and metaphor. Employ parallel structure. Make grand comparisons. Add dramatic flourishes and poetic imagery."
-      },
-      {
-        "author": "Stephen King",
-        "style": "Build ordinary scenes with creeping unease. Use specific sensory details that hint at wrongness. Make the mundane feel threatening."
-      },
-      {
-        "author": "Douglas Adams",
-        "style": "Use absurd comparisons and ridiculous specificity. Employ dry British wit. Make outlandish observations seem matter-of-fact."
-      }
-    ]
+    "enabled": false,
+    "_comment": "Deprecated. LLM analysis removed from active pipeline; preserved for reference only."
   },
   "s3_deployment": {
     "enabled": true,
@@ -238,7 +207,7 @@
   "logging": {
     "level": "INFO",
     "console": true,
-    "file": "logs/pipeline_{timestamp}.log",
+    "file": "{pipeline_base}/logs/pipeline_{timestamp}.log",
     "include_timestamps": true
   }
 }

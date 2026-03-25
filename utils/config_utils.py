@@ -1,12 +1,28 @@
 import os
 import json
+import re
 from typing import Any, Dict
 
 
+_ENV_DEFAULT_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\:([^}]*)\}")
+
+
+def _expand_env_with_default(value: str) -> str:
+    """Expand shell-like ${VAR:default} placeholders using environment values."""
+    def _replace(match: re.Match[str]) -> str:
+        var_name = match.group(1)
+        default_value = match.group(2)
+        return os.getenv(var_name, default_value)
+
+    return _ENV_DEFAULT_PATTERN.sub(_replace, value)
+
+
 def _expand_string(value: str, variables: Dict[str, str]) -> str:
-    # 1) Expand environment variables like ${VAR}
-    expanded = os.path.expandvars(value)
-    # 2) Expand {var} placeholders using provided variables
+    # 1) Expand shell-like env defaults (${VAR:default}) first
+    expanded = _expand_env_with_default(value)
+    # 2) Expand environment variables like ${VAR}
+    expanded = os.path.expandvars(expanded)
+    # 3) Expand {var} placeholders using provided variables
     try:
         expanded = expanded.format(**variables)
     except Exception:
@@ -43,13 +59,10 @@ def resolve_config_placeholders(config: Dict[str, Any]) -> Dict[str, Any]:
     configured_root = paths.get("lib_root")
     resolved_config_root = ""
     if configured_root:
-        expanded_value = os.path.expandvars(configured_root)
-        if expanded_value and expanded_value != configured_root:
+        expanded_value = _expand_env_with_default(configured_root)
+        expanded_value = os.path.expandvars(expanded_value)
+        if expanded_value and "${" not in expanded_value:
             resolved_config_root = expanded_value
-        elif "${" in configured_root:
-            resolved_config_root = ""
-        else:
-            resolved_config_root = configured_root
 
     lib_root = env_lib or resolved_config_root or os.getcwd()
 
@@ -57,7 +70,10 @@ def resolve_config_placeholders(config: Dict[str, Any]) -> Dict[str, Any]:
     paths["lib_root"] = lib_root
 
     configured_cache = paths.get("huggingface_cache")
-    expanded_cache = os.path.expandvars(configured_cache) if configured_cache else ""
+    expanded_cache = ""
+    if configured_cache:
+        expanded_cache = _expand_env_with_default(configured_cache)
+        expanded_cache = os.path.expandvars(expanded_cache)
 
     candidate_paths = [
         env_hf_cache,

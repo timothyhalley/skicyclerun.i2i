@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "description": "Curated known locations. If photo GPS falls within radius_m and reverse-geocode resolves to a low-value type listed in when_here_types, line1/line2 are overridden.",
+  "hints": [
+    {
+      "id": "darrell-house-robin-drive",
+      "name": "Darrell's House on Robin Drive",
+      "lat": 49.862775,
+      "lon": -119.468978,
+      "radius_m": 100,
+      "line1": "Darrell's House on Robin Drive",
+      "line2": "Kelowna, BC",
+      "when_here_types": [
+        "residential",
+        "road",
+        "highway",
+        "service",
+        "unclassified"
+      ],
+      "enabled": true
+    }
+  ]
+}
