@@ -13,8 +13,8 @@
     ]
   },
   "paths": {
-    "lib_root": "${SKICYCLERUN_LIB_ROOT:/Volumes/MySSD/skicyclerun.i2i}",
-    "huggingface_cache": "${HUGGINGFACE_CACHE_LIB:/Volumes/MySSD/huggingface}",
+    "lib_root": "${SKICYCLERUN_LIB_ROOT:/Volumes/MySSD2/skicyclerun.i2i}",
+    "huggingface_cache": "${HUGGINGFACE_CACHE_LIB:/Volumes/MySSD2/huggingface}",
     "lora_models": "{lib_root}/models/lora",
     "pipeline_base": "{lib_root}/pipeline",
     "archive_albums": "{pipeline_base}/archive/albums",
@@ -161,7 +161,7 @@
     "registry_path": "config/lora_registry.json",
     "batch_mode": true,
     "preserve_metadata": true,
-    "loras_to_process": ["Origami"],
+    "loras_to_process": ["Afremov", "Gorillaz"],
     "_Available_loras": [
       "PencilDrawing",
       "FractalGeometry",

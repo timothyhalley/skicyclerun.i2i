@@ -3,18 +3,20 @@
 # Run this ONCE to install Python, dependencies, and verify PyTorch
 # For daily work, use: source ./env_setup.sh <images_root>
 
+set -e
+
 echo "🚀 Installing skicyclerun.i2i dependencies..."
 
-# 1. Ensure Python 3.13.2 is installed via pyenv
+# 1. Ensure Python 3.13.12 is installed via pyenv
 echo "📋 Checking Python version..."
-if ! pyenv versions | grep -q "3.13.2"; then
-    echo "Installing Python 3.13.2..."
-    pyenv install 3.13.2
+if ! pyenv versions | grep -q "3.13.12"; then
+    echo "Installing Python 3.13.12..."
+    pyenv install 3.13.12
 fi
 
 # 2. Set Python version for this project
-echo "🐍 Setting Python 3.13.2 for this project..."
-pyenv local 3.13.2
+echo "🐍 Setting Python 3.13.12 for this project..."
+pyenv local 3.13.12
 
 # 3. Verify Python version
 echo "Verifying Python version:"
@@ -40,7 +42,15 @@ python -c "import torch, diffusers, transformers, peft; print(f'PyTorch: {torch.
 echo "🎉 Installation complete!"
 echo ""
 echo "📝 IMPORTANT: For every terminal session, run:"
-echo "   source ./env_setup.sh /Volumes/MySSD/skicyclerun.i2i"
+echo "   source ./env_setup.sh /Volumes/MySSD/skicyclerun.i2i /Volumes/MySSD/huggingface"
+echo "   (adjust paths as needed)"
+echo ""
+echo "   Setup key to hugging face"
+echo "   hf auth login"
+echo "      Then select 'Login with a token' and paste your Hugging Face token."
+echo ""
+echo "   This will set up your environment variables and ensure you have access to the Hugging Face models."
+echo "   Check Hugging Face access with: hf auth whoami"
 echo ""
 echo "Then you can run the pipeline:"
-echo "   python pipeline.py --stages geocode_sweep --yes"
+echo "   run_Pipeline.sh --stages geocode_sweep --yes"
