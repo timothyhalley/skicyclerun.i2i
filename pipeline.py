@@ -30,6 +30,13 @@ if _env_file.exists():
                 _k, _, _v = _line.partition('=')
                 os.environ.setdefault(_k.strip(), _v.strip())
 
+# Transformers deprecates TRANSFORMERS_CACHE in favor of HF_HOME.
+# Keep backwards compatibility with old shells while suppressing the warning.
+if os.getenv("TRANSFORMERS_CACHE"):
+    if not os.getenv("HF_HOME"):
+        os.environ["HF_HOME"] = os.environ["TRANSFORMERS_CACHE"]
+    del os.environ["TRANSFORMERS_CACHE"]
+
 # Setup file logging - will be initialized in main() with stage info
 
 
@@ -679,32 +686,73 @@ class PipelineRunner:
                 return  # Exit the LoRA processing stage
             
             logInfo("=" * 80)
-            logInfo(f"🎨 STARTING LoRA PROCESSING: {lora_name}")
-            logInfo(f"📂 Input folder: {input_rel}")
-            logInfo(f"📂 Output folder: {output_rel}")
-            logInfo("=" * 80)
             
-            # Call LoRA transformer with batch processing
-            cmd = [
-                sys.executable, 
-                'core/lora_transformer.py',
-                '--lora', lora_name,
-                '--batch',
-                '--input-folder', input_folder,
-                '--output-folder', output_folder
-            ]
+            # Handle NoLoRA pass-through: copy scaled images without LoRA processing
+            if lora_name == "NoLoRA":
+                logInfo(f"🔄 PASS-THROUGH MODE: {lora_name}")
+                logInfo(f"📂 Input folder: {input_rel}")
+                logInfo(f"📂 Output folder: {output_rel}")
+                logInfo("⏭️  Copying scaled images without LoRA style transfer")
+                logInfo("=" * 80)
+                
+                try:
+                    from pathlib import Path
+                    import shutil
+                    
+                    input_path = Path(input_folder)
+                    output_path = Path(output_folder)
+                    output_path.mkdir(parents=True, exist_ok=True)
+                    
+                    # Copy all image files from input to output
+                    supported_formats = {'.jpg', '.jpeg', '.png', '.webp', '.bmp', '.gif'}
+                    copied_count = 0
+                    
+                    for src_file in input_path.iterdir():
+                        if src_file.is_file() and src_file.suffix.lower() in supported_formats:
+                            dst_file = output_path / src_file.name
+                            shutil.copy2(src_file, dst_file)  # copy2 preserves metadata
+                            copied_count += 1
+                    
+                    logInfo(f"\n✅ {lora_name} pass-through complete - {copied_count} images copied (no transformation)")
+                
+                except Exception as e:
+                    logError(f"\n❌ {lora_name} pass-through failed: {e}")
+                    logError(f"❌ Pipeline stopped due to pass-through copy failure")
+                    raise
             
-            try:
-                # Let stdout/stderr stream directly for progress and timing
-                # Pass environment to ensure UI-set variables are inherited
-                result = subprocess.run(cmd, check=True, text=True, env=os.environ.copy())
-                logInfo(f"\n✅ {lora_name} processing complete")
-            except subprocess.CalledProcessError as e:
-                logError(f"\n❌ {lora_name} processing failed: {e}")
-                if e.stderr:
-                    logError(f"Error output:\n{e.stderr}")
-                logError(f"❌ Pipeline stopped due to LoRA processing failure")
-                raise  # Stop pipeline on failure
+            else:
+                # Standard LoRA processing via transformer
+                logInfo(f"🎨 STARTING LoRA PROCESSING: {lora_name}")
+                logInfo(f"📂 Input folder: {input_rel}")
+                logInfo(f"📂 Output folder: {output_rel}")
+                logInfo("=" * 80)
+                
+                # Call LoRA transformer with batch processing
+                cmd = [
+                    sys.executable, 
+                    'core/lora_transformer.py',
+                    '--lora', lora_name,
+                    '--batch',
+                    '--input-folder', input_folder,
+                    '--output-folder', output_folder
+                ]
+
+                # Force subprocess logs into the same per-run pipeline log.
+                run_log_file = os.getenv('SKICYCLERUN_RUN_LOG_FILE')
+                if run_log_file:
+                    cmd.extend(['--log-file', run_log_file])
+                
+                try:
+                    # Let stdout/stderr stream directly for progress and timing
+                    # Pass environment to ensure UI-set variables are inherited
+                    result = subprocess.run(cmd, check=True, text=True, env=os.environ.copy())
+                    logInfo(f"\n✅ {lora_name} processing complete")
+                except subprocess.CalledProcessError as e:
+                    logError(f"\n❌ {lora_name} processing failed: {e}")
+                    if e.stderr:
+                        logError(f"Error output:\n{e.stderr}")
+                    logError(f"❌ Pipeline stopped due to LoRA processing failure")
+                    raise  # Stop pipeline on failure
         
         logInfo(f"✅ LoRA processing complete - {len(loras_to_process)} styles processed")
     
@@ -1520,6 +1568,39 @@ if __name__ == "__main__":
         root_logger.addHandler(console_handler)
     root_logger.setLevel(logging.INFO)
 
+    # Set up the log file immediately so all output — env-var errors, config
+    # failures, and user cancellations — is captured from the very start of
+    # the run.  Try the config-resolved path first; fall back to the project-
+    # local logs/ directory if that path is inaccessible (e.g. SSD unmounted).
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    try:
+        with open(args.config, 'r', encoding='utf-8') as _cf:
+            _early_cfg = resolve_config_placeholders(json.load(_cf))
+    except Exception:
+        _early_cfg = None
+    log_file = resolve_log_file_path(_early_cfg, timestamp)
+    try:
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        _file_handler = logging.FileHandler(log_file, encoding='utf-8')
+    except OSError:
+        # Configured log path is not writable (e.g. external drive not mounted);
+        # fall back to the project-local logs/ directory.
+        log_file = resolve_log_file_path(None, timestamp)
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        _file_handler = logging.FileHandler(log_file, encoding='utf-8')
+    _file_handler.setLevel(logging.INFO)
+    _file_handler.setFormatter(logging.Formatter(
+        '%(asctime)s [%(levelname)s] %(message)s', '%Y-%m-%d %H:%M:%S'
+    ))
+    root_logger.addHandler(_file_handler)
+    # Share this run log path with child subprocesses (e.g., LoRA stage).
+    os.environ['SKICYCLERUN_RUN_LOG_FILE'] = str(log_file)
+    logInfo("=" * 80)
+    logInfo(f"📝 Pipeline Run: {timestamp}")
+    logInfo(f"📋 Command: pipeline.py {' '.join(sys.argv[1:])}")
+    logInfo(f"📁 Log file: {log_file}")
+    logInfo("=" * 80)
+
     if not args.check_config:
         # Accept config/pipeline_config.json path values as fallback when env vars
         # are not exported in the current shell session.
@@ -1539,7 +1620,6 @@ if __name__ == "__main__":
                 os.environ.setdefault('HUGGINGFACE_CACHE_LIB', str(_cfg_hf_cache))
                 os.environ.setdefault('HF_HOME', str(_cfg_hf_cache))
                 os.environ.setdefault('HUGGINGFACE_CACHE', str(_cfg_hf_cache))
-                os.environ.setdefault('TRANSFORMERS_CACHE', str(_cfg_hf_cache))
         except Exception as _cfg_err:
             logWarn(f"⚠️  Could not pre-resolve config fallbacks from {args.config}: {_cfg_err}")
 
@@ -1550,13 +1630,12 @@ if __name__ == "__main__":
             os.getenv("HUGGINGFACE_CACHE_LIB"),
             os.getenv("HUGGINGFACE_CACHE"),
             os.getenv("HF_HOME"),
-            os.getenv("TRANSFORMERS_CACHE"),
         ])
         if not cache_env_present:
             missing_envs.append("HUGGINGFACE_CACHE_LIB/HF_HOME")
         if missing_envs:
             logError(f"❌ Required environment variable(s) not set: {', '.join(missing_envs)}")
-            logError("   Run: source ./env_setup.sh <images_root> [huggingface_cache] before executing the pipeline.")
+            logError("   Run: ./run_SetupEnv.sh --profile performance/macmini-fast-20260326.txt before executing the pipeline.")
             sys.exit(1)
         
         # Check HuggingFace authentication if lora_processing is requested
@@ -1642,22 +1721,5 @@ if __name__ == "__main__":
             sys.exit(0)
     else:
         logInfo("✅ Proceeding without confirmation (--yes supplied).")
-
-    # Setup run log file path from config and mirror all terminal output to it.
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    log_file = resolve_log_file_path(runner.config, timestamp)
-    log_file.parent.mkdir(parents=True, exist_ok=True)
-
-    _log_fp = open(log_file, 'a', encoding='utf-8')
-    sys.stdout = TeeStream(sys.stdout, _log_fp)
-    sys.stderr = TeeStream(sys.stderr, _log_fp)
-    logging.getLogger().setLevel(logging.INFO)
-    
-    # Log header with command info
-    logInfo("=" * 80)
-    logInfo(f"📝 Pipeline Run: {timestamp}")
-    logInfo(f"📋 Command: pipeline.py {' '.join(sys.argv[1:])}")
-    logInfo(f"📁 Log file: {log_file}")
-    logInfo("=" * 80)
 
     runner.run_pipeline(stages_to_run)

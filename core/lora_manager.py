@@ -1,4 +1,5 @@
 import os
+import time
 from huggingface_hub import hf_hub_download
 from utils.logger import logInfo, logError
 
@@ -69,11 +70,13 @@ def apply_lora(pipeline, lora_config, config):
         # HuggingFace repo - download from hub
         logInfo(f"📥 Downloading LoRA from HuggingFace Hub: {lora_path}")
         try:
+            t_download = time.perf_counter()
             resolved_path = hf_hub_download(
                 repo_id=lora_path,
                 filename=weights_filename,
                 cache_dir=config["cache_dir"]
             )
+            logInfo(f"✅ LoRA download/resolve complete in {time.perf_counter() - t_download:.1f}s")
             logInfo(f"📦 LoRA weights resolved to: {resolved_path}")
         except Exception as e:
             logError(f"Failed to resolve LoRA weights: {e}")
@@ -81,6 +84,7 @@ def apply_lora(pipeline, lora_config, config):
 
     # ✅ Load weights - use direct file path for local, or HF repo for remote
     logInfo(f"🎨 Loading LoRA weights...")
+    t_load = time.perf_counter()
     if is_local:
         # Local file - load directly with file path
         pipeline.load_lora_weights(
@@ -94,7 +98,9 @@ def apply_lora(pipeline, lora_config, config):
             weight_name=weights_filename,
             adapter_name="lora"
         )
+    logInfo(f"✅ LoRA weight load complete in {time.perf_counter() - t_load:.1f}s")
     
+    t_activate = time.perf_counter()
     # Activate with configurable weights from registry
     pipeline.set_adapters(["lora"], adapter_weights=[lora_scale])
     
@@ -103,5 +109,6 @@ def apply_lora(pipeline, lora_config, config):
     if hasattr(pipeline, 'text_encoder') and hasattr(pipeline.text_encoder, 'set_adapter_scale'):
         pipeline.text_encoder.set_adapter_scale('lora', text_encoder_scale)
         logInfo(f"✅ Text encoder scale set to {text_encoder_scale}")
+    logInfo(f"✅ LoRA adapter activation complete in {time.perf_counter() - t_activate:.1f}s")
     
     logInfo(f"✅ LoRA '{lora_config['adapter_name']}' loaded and activated successfully.")

@@ -13,7 +13,7 @@ Three-phase pipeline for processing photos from Apple Photos through LoRA artist
 Set up required environment variables before running the pipeline:
 
 ```bash
-source ./env_setup.sh /Volumes/MySSD/skicyclerun.i2i
+./run_SetupEnv.sh --profile performance/macmini-fast-20260326.txt
 ```
 
 This sets:

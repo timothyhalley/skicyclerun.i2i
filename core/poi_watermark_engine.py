@@ -1,6 +1,6 @@
 """POI watermark engine — per-photo and batch pipeline entry points.
 
-This is the public API consumed by both the CLI (poi_Watermark.py) and the
+This is the public API consumed by both the CLI (geoScripts/poi_Watermark.py) and the
 pipeline stage (pipeline.py → run_post_lora_watermarking_stage).
 
 Public functions:

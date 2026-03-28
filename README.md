@@ -50,33 +50,9 @@ caffeinate -i python3 pipeline.py --yes
 
 ---
 
-## 🖥️ Using the UI (main.py)
+## 🖥️ Setup & Run (CLI)
 
-### 1. Install UI Dependencies
-
-```bash
-pip3 install -r requirements-ui.txt
-```
-
-### 2. Launch Application
-
-```bash
-python3 main.py
-```
-
-### 3. Select Stages & Flags
-
-The UI provides:
-
-- **Pipeline Stages**: Check boxes for stages to run (export, metadata_extraction, llm_image_analysis, etc.)
-- **Command Flags**: Toggle options like `--verbose`, `--debug-prompt`, `--force-llm-reanalysis`
-- **Command Preview**: See the exact command before execution
-- **Output Console**: Watch real-time pipeline progress
-- **Run/Stop Buttons**: Start pipeline or gracefully stop mid-process
-
-### 4. Monitor Progress
-
-All output streams directly to the UI console—no need to check terminal or log files separately.
+The project is CLI-only. Use the setup runner once, then execute pipeline stages directly.
 
 ---
 
@@ -84,16 +60,11 @@ All output streams directly to the UI console—no need to check terminal or log
 
 ### 1. Environment Setup
 
-**Required before every terminal session:**
-
 ```bash
-# Set up environment variables
-source ./env_setup.sh /Volumes/MySSD/skicyclerun.i2i /Volumes/MySSD/huggingface
-
-# Verify setup
-printenv SKICYCLERUN_LIB_ROOT
-printenv HF_HOME
+./run_SetupEnv.sh --profile performance/macmini-fast-20260326.txt
 ```
+
+This configures Python, installs requirements, writes `.env`, and updates config defaults.
 
 ### 2. Run Complete Pipeline
 

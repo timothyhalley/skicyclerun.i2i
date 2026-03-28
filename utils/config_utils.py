@@ -22,11 +22,17 @@ def _expand_string(value: str, variables: Dict[str, str]) -> str:
     expanded = _expand_env_with_default(value)
     # 2) Expand environment variables like ${VAR}
     expanded = os.path.expandvars(expanded)
-    # 3) Expand {var} placeholders using provided variables
+    # 3) Expand {var} placeholders using provided variables.
+    # Keep unknown placeholders intact (e.g. {timestamp}) so later stages can
+    # substitute them without blocking known path variables like {pipeline_base}.
+    class _SafeFormatDict(dict):
+        def __missing__(self, key):
+            return "{" + key + "}"
+
     try:
-        expanded = expanded.format(**variables)
+        expanded = expanded.format_map(_SafeFormatDict(variables))
     except Exception:
-        # If format fails (e.g., brace in text), return best-effort
+        # If format fails (e.g., malformed braces), return best-effort.
         pass
     return expanded
 
@@ -75,12 +81,14 @@ def resolve_config_placeholders(config: Dict[str, Any]) -> Dict[str, Any]:
         expanded_cache = _expand_env_with_default(configured_cache)
         expanded_cache = os.path.expandvars(expanded_cache)
 
+    # pipeline_config.json is the source of truth: expanded_cache (from config) is
+    # checked first.  Env vars act as overrides only when config has no explicit value.
     candidate_paths = [
+        expanded_cache,
         env_hf_cache,
         env_huggingface_cache,
         env_transformers_cache,
         env_hf_home,
-        expanded_cache,
     ]
 
     huggingface_cache = ""

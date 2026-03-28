@@ -204,7 +204,7 @@ If you want to capture comprehensive EXIF for existing images:
 ```bash
 # Clear existing metadata_extraction stage markers to force re-extraction
 # OR just run on new images that don't have comprehensive EXIF yet
-source ./env_setup.sh /Volumes/MySSD/skicyclerun.i2i
+./run_SetupEnv.sh --profile performance/macmini-fast-20260326.txt
 python3 pipeline.py --stages metadata_extraction --yes
 ```
 

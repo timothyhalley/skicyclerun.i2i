@@ -126,7 +126,7 @@
     },
     "copyright_line": {
       "_comment": "Settings for LINE 2 (location + copyright)",
-      "format": "{symbol} SkiCycleRun © {year}",
+      "format": "{symbol} SkiCycleRun \u00a9 {year}",
       "font_size": 16,
       "min_size": 12,
       "color": [255, 255, 255, 180],
@@ -134,13 +134,13 @@
       "stroke_width": 2
     },
     "line_spacing": 8,
-    "symbol": "▲",
+    "symbol": "\u25b2",
     "fixed_year": 2026,
     "year_offset": 1,
     "include_landmark": false,
     "landmark_min_score": 0.6,
     "landmark_max_distance_m": 300,
-    "landmark_format": " — {name}",
+    "landmark_format": " \u2014 {name}",
     "font": {
       "path": "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
       "fallback_paths": [
@@ -152,7 +152,10 @@
       "fit_mode": "shrink_to_fit"
     },
     "position": "bottom_right",
-    "margin": { "x": 50, "y": 40 },
+    "margin": {
+      "x": 50,
+      "y": 40
+    },
     "apply_before_lora": false
   },
   "lora_processing": {
@@ -161,13 +164,15 @@
     "registry_path": "config/lora_registry.json",
     "batch_mode": true,
     "preserve_metadata": true,
-    "loras_to_process": ["Afremov", "Gorillaz"],
+    "_loras_to_process_comment": "Special entries: 'NoLoRA' copies scaled images without style transfer (pass-through mode). Include as first entry to generate unmodified baseline images alongside stylized versions.",
+    "loras_to_process": ["NoLoRA"],
     "_Available_loras": [
       "PencilDrawing",
       "FractalGeometry",
       "Afremov",
       "Gorillaz",
-      "Origami"
+      "Origami",
+      "NoLoRA"
     ],
     "input_folder": "{preprocessed}",
     "output_folder": "{lora_processed}",
@@ -209,5 +214,12 @@
     "console": true,
     "file": "{pipeline_base}/logs/pipeline_{timestamp}.log",
     "include_timestamps": true
+  },
+  "python_environment": {
+    "python_version": "3.13.12",
+    "profile": "performance/MBP_TestProfile2.txt",
+    "lib_root": "/Volumes/MySSD2/skicyclerun.i2i",
+    "huggingface_cache": "/Volumes/MySSD2/huggingface",
+    "last_setup": "2026-03-28T03:15:26Z"
   }
 }

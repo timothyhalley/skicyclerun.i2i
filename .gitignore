@@ -42,6 +42,10 @@ ENV/
 .coverage
 htmlcov/
 
+# Runtime environment (machine-specific paths and credentials)
+# Regenerate with: ./run_SetupEnv.sh --profile performance/<profile>.txt
+.env
+
 # Logs
 logs/
 *.log

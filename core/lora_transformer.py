@@ -14,7 +14,7 @@ from utils.cli import load_config, list_loras
 from utils.config_utils import expand_with_paths
 from utils.spinner import Spinner
 from utils.validator import validate_config
-from core.pipeline_loader import load_pipeline
+from core.pipeline_loader import load_pipeline, resolve_device, compile_pipeline_transformer, compile_pipeline_transformer
 from core.lora_manager import apply_lora
 from core.image_processor import load_and_prepare_image
 from core.inference_runner import run_inference
@@ -430,7 +430,10 @@ def main():
     # Console output is handled by print() in logger.py wrapper functions
     if effective_log_file:
         file_handler = logging.FileHandler(effective_log_file)
-        file_handler.setFormatter(logging.Formatter("%(message)s"))
+        file_handler.setFormatter(logging.Formatter(
+            "%(asctime)s [%(levelname)s] %(message)s",
+            "%Y-%m-%d %H:%M:%S"
+        ))
         logging.root.handlers = []  # Clear any existing handlers
         logging.root.addHandler(file_handler)
         logging.root.setLevel(logging.DEBUG if args.debug else logging.INFO)
@@ -458,19 +461,16 @@ def main():
             sys.exit(1)
     
     # ─────────────────────────────────────────────────────────────
-    # Device selection with CPU fallback option (before computing effective settings)
+    # Device selection: read from config, then validate via resolve_device.
+    # resolve_device logs MPS status and falls back to CPU when unavailable.
+    # CLI --cpu-fallback overrides the config value.
     # ─────────────────────────────────────────────────────────────
-    import torch
-    
     if args.cpu_fallback:
-        device = "cpu"
+        config_device = "cpu"
         logInfo("💻 CPU fallback mode enabled - slower but no memory limits")
     else:
-        device = (
-            "cuda" if torch.cuda.is_available()
-            else "mps" if torch.backends.mps.is_available()
-            else "cpu"
-        )
+        config_device = config.get("device", "mps")
+    device = resolve_device(config_device)
 
     # ─────────────────────────────────────────────────────────────
     # Compute and echo effective defaults (what will be used)
@@ -698,7 +698,10 @@ def main():
         logDebug(f"Applying LoRA configuration: {lora_cfg}")
 
     apply_lora(pipeline, lora_cfg, config)
-    
+
+    # torch.compile must come AFTER apply_lora so PEFT can inject adapters first
+    compile_pipeline_transformer(pipeline, device=device)
+
     # Initial memory cleanup after model loading
     cleanup_memory()
     if args.debug:

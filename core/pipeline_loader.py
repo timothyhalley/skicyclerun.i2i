@@ -1,3 +1,4 @@
+import os
 import torch
 from diffusers import FluxKontextPipeline
 from utils.logger import logInfo, logError, logWarn, logDebug   
@@ -89,3 +90,76 @@ def load_pipeline(model_name, device, precision, config):
         
         # Re-raise other errors
         raise
+
+
+def compile_pipeline_transformer(pipeline, device: str | None = None) -> None:
+    """Apply torch.compile to pipeline.transformer (opt-in via env vars).
+
+    Must be called AFTER load_lora_weights() / apply_lora() — PEFT adapter
+    injection does not work on a compiled module.
+    """
+    compile_enabled = os.getenv("SKICYCLERUN_TORCH_COMPILE", "0").strip().lower() in {
+        "1", "true", "yes", "on"
+    }
+    if not compile_enabled:
+        return
+
+    compile_backend = os.getenv("SKICYCLERUN_TORCH_COMPILE_BACKEND", "inductor").strip()
+    compile_mode = os.getenv("SKICYCLERUN_TORCH_COMPILE_MODE", "max-autotune-no-cudagraphs").strip()
+    compile_on_mps = os.getenv("SKICYCLERUN_TORCH_COMPILE_ON_MPS", "0").strip().lower() in {
+        "1", "true", "yes", "on"
+    }
+    allow_mps_inductor = os.getenv("SKICYCLERUN_TORCH_COMPILE_ALLOW_MPS_INDUCTOR", "0").strip().lower() in {
+        "1", "true", "yes", "on"
+    }
+    transformer = getattr(pipeline, "transformer", None)
+
+    if transformer is None:
+        logWarn("⚠️ torch.compile requested but pipeline.transformer is missing; skipping compile")
+        return
+    elif not hasattr(torch, "compile"):
+        logWarn("⚠️ torch.compile requested but unavailable in this torch build; skipping compile")
+        return
+
+    # MPS + inductor is still prototype-quality in upstream torch and is known
+    # to fail on some FLUX reduction kernels. Keep MPS inference enabled but
+    # skip compile unless explicitly requested.
+    normalized_device = (device or "").strip().lower()
+    if not normalized_device:
+        transformer_device = getattr(transformer, "device", None)
+        normalized_device = str(transformer_device).strip().lower() if transformer_device else ""
+    is_mps_device = normalized_device.startswith("mps")
+
+    if is_mps_device and not compile_on_mps:
+        logWarn(
+            "⚠️ torch.compile auto-disabled on MPS for stability; running uncompiled on MPS. "
+            "Set SKICYCLERUN_TORCH_COMPILE_ON_MPS=1 to force-enable."
+        )
+        return
+
+    if is_mps_device and compile_backend == "inductor" and not allow_mps_inductor:
+        logWarn(
+            "⚠️ SKICYCLERUN_TORCH_COMPILE_BACKEND=inductor is unstable on MPS; "
+            "switching to backend=aot_eager. Set SKICYCLERUN_TORCH_COMPILE_ALLOW_MPS_INDUCTOR=1 to override."
+        )
+        compile_backend = "aot_eager"
+        if compile_mode == "max-autotune-no-cudagraphs":
+            compile_mode = "reduce-overhead"
+
+    try:
+        compile_kwargs = {
+            "backend": compile_backend,
+            "fullgraph": False,
+        }
+        # mode is primarily meaningful for inductor; avoid backend-specific mode errors.
+        if compile_backend == "inductor":
+            compile_kwargs["mode"] = compile_mode
+
+        mode_desc = compile_kwargs.get("mode", "<default>")
+        logInfo(
+            f"🧪 Compiling pipeline.transformer (backend={compile_backend}, mode={mode_desc})"
+        )
+        pipeline.transformer = torch.compile(transformer, **compile_kwargs)
+        logInfo("✅ torch.compile applied to pipeline.transformer")
+    except Exception as compile_err:
+        logWarn(f"⚠️ torch.compile failed, continuing uncompiled: {compile_err}")

@@ -1,0 +1,77 @@
+# SkiCycleRun Performance Profile — MBP Test 1 (MPS-first, minimal pins)
+# Captured/Created: 2026-03-27
+# ─────────────────────────────────────────────────────────────────────────────
+# Usage:
+#   ./run_SetupEnv.sh --profile performance/MBP_TestProfile1.txt
+#   ./run_SetupEnv.sh --profile performance/MBP_TestProfile1.txt --capture
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# ── Machine configuration ─────────────────────────────────────────────────────
+# python_version: 3.13.12
+# lib_root: /Volumes/MySSD2/skicyclerun.i2i
+# huggingface_cache: /Volumes/MySSD2/huggingface
+#
+# ── Device / precision ────────────────────────────────────────────────────────
+# device: mps
+# precision: bfloat16
+#
+# ── Inference tuning ──────────────────────────────────────────────────────────
+# num_inference_steps: 24
+# guidance_scale: 3.5
+#
+# ── PyTorch / MPS flags ───────────────────────────────────────────────────────
+# pytorch_enable_mps_fallback: 1
+# pytorch_mps_high_watermark_ratio: 0.0
+# pytorch_mps_low_watermark_ratio: 0.7
+#
+# ── Torch runtime tuning (consumed via .env by pipeline runtime) ────────────
+# torch_matmul_precision: high
+# torch_compile: 1
+# torch_compile_backend: aot_eager
+# torch_compile_mode: reduce-overhead
+# torch_compile_on_mps: 1
+# torch_compile_allow_mps_inductor: 0
+#
+# ── HuggingFace / CPU threading ───────────────────────────────────────────────
+# tokenizers_parallelism: false
+# omp_num_threads: 1
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Core PyTorch and ML libraries
+# Hard pins kept only where performance/reproducibility matters.
+torch==2.7.0
+# Best-known companion for torch 2.7.0 on this project.
+torchvision==0.22.0
+# torchaudio intentionally omitted (image pipeline does not use it).
+
+# Hugging Face ecosystem
+# Keep source pin for the known-fast FLUX behavior on Apple Silicon.
+diffusers @ git+https://github.com/huggingface/diffusers.git@23ebbb4bc81a17ebea17cb7cb94f301199e49a7f
+# Keep transformers pinned to avoid tokenizers/API drift between test runs.
+transformers==4.57.1
+# Not performance-critical for inference path; allow resolver flexibility.
+accelerate
+
+# LoRA / Fine-tuning
+# Keep broad to reduce solver conflicts unless a regression is observed.
+peft
+
+# Tokenization
+sentencepiece
+protobuf
+
+# Model storage / safety
+safetensors
+tokenizers
+
+# Image processing
+pillow
+piexif
+
+# Core numeric / geo
+numpy
+timezonefinder
+
+# HTTP + system utilities
+requests
+psutil

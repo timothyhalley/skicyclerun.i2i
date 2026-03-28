@@ -1,0 +1,69 @@
+# SkiCycleRun Performance Profile — MacBook Pro (current / under-tuning)
+# Captured: 2026-03-26T15:45:07Z
+# ─────────────────────────────────────────────────────────────────────────────
+# Usage:
+#   ./run_SetupEnv.sh --profile performance/mbp-repro-20260326.txt
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# ── Machine configuration ─────────────────────────────────────────────────────
+# python_version: 3.13.12
+# lib_root: /Volumes/MySSD2/skicyclerun.i2i
+# huggingface_cache: /Volumes/MySSD2/huggingface
+#
+# ── Device / precision ────────────────────────────────────────────────────────
+# device: mps
+# precision: bfloat16
+#
+# ── Inference tuning ──────────────────────────────────────────────────────────
+# num_inference_steps: 24
+# guidance_scale: 3.5
+#
+# ── PyTorch / MPS flags ───────────────────────────────────────────────────────
+# pytorch_enable_mps_fallback: 1
+# pytorch_mps_high_watermark_ratio: 0.0
+# pytorch_mps_low_watermark_ratio: 0.7
+#
+# ── HuggingFace / CPU threading ───────────────────────────────────────────────
+# tokenizers_parallelism: false
+# omp_num_threads: 1
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# ⚠️  PERFORMANCE INVESTIGATION NOTE:
+# This MBP currently has torch 2.8.0 and released diffusers 0.35.2.
+# The fast Mac mini uses torch 2.7.0 + git diffusers — which has better MPS
+# throughput on Apple Silicon for FLUX i2i workloads.
+# To try the faster stack, run with the macmini-fast profile instead:
+#   ./run_SetupEnv.sh --profile performance/macmini-fast-20260326.txt
+
+# Core PyTorch and ML libraries
+torch==2.8.0
+torchvision==0.23.0
+# torchaudio not needed for image-to-image pipeline — omitted
+
+# Hugging Face ecosystem
+diffusers==0.35.2
+transformers==4.57.1
+accelerate==1.11.0
+
+# LoRA and model fine-tuning
+peft==0.18.1
+
+# Tokenization and text processing
+sentencepiece==0.2.1
+protobuf==7.34.1
+
+# Model storage and safety
+safetensors==0.7.0
+tokenizers==0.22.2
+
+# Image processing and utilities
+pillow==12.1.1
+piexif==1.1.3
+numpy==2.4.3
+timezonefinder==8.2.1
+
+# HTTP requests
+requests==2.33.0
+
+# System monitoring and utilities
+psutil==7.2.2
