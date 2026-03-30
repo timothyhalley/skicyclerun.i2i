@@ -686,73 +686,38 @@ class PipelineRunner:
                 return  # Exit the LoRA processing stage
             
             logInfo("=" * 80)
+            logInfo(f"🎨 STARTING LoRA PROCESSING: {lora_name}")
+            logInfo(f"📂 Input folder: {input_rel}")
+            logInfo(f"📂 Output folder: {output_rel}")
+            logInfo("=" * 80)
             
-            # Handle NoLoRA pass-through: copy scaled images without LoRA processing
-            if lora_name == "NoLoRA":
-                logInfo(f"🔄 PASS-THROUGH MODE: {lora_name}")
-                logInfo(f"📂 Input folder: {input_rel}")
-                logInfo(f"📂 Output folder: {output_rel}")
-                logInfo("⏭️  Copying scaled images without LoRA style transfer")
-                logInfo("=" * 80)
-                
-                try:
-                    from pathlib import Path
-                    import shutil
-                    
-                    input_path = Path(input_folder)
-                    output_path = Path(output_folder)
-                    output_path.mkdir(parents=True, exist_ok=True)
-                    
-                    # Copy all image files from input to output
-                    supported_formats = {'.jpg', '.jpeg', '.png', '.webp', '.bmp', '.gif'}
-                    copied_count = 0
-                    
-                    for src_file in input_path.iterdir():
-                        if src_file.is_file() and src_file.suffix.lower() in supported_formats:
-                            dst_file = output_path / src_file.name
-                            shutil.copy2(src_file, dst_file)  # copy2 preserves metadata
-                            copied_count += 1
-                    
-                    logInfo(f"\n✅ {lora_name} pass-through complete - {copied_count} images copied (no transformation)")
-                
-                except Exception as e:
-                    logError(f"\n❌ {lora_name} pass-through failed: {e}")
-                    logError(f"❌ Pipeline stopped due to pass-through copy failure")
-                    raise
-            
-            else:
-                # Standard LoRA processing via transformer
-                logInfo(f"🎨 STARTING LoRA PROCESSING: {lora_name}")
-                logInfo(f"📂 Input folder: {input_rel}")
-                logInfo(f"📂 Output folder: {output_rel}")
-                logInfo("=" * 80)
-                
-                # Call LoRA transformer with batch processing
-                cmd = [
-                    sys.executable, 
-                    'core/lora_transformer.py',
-                    '--lora', lora_name,
-                    '--batch',
-                    '--input-folder', input_folder,
-                    '--output-folder', output_folder
-                ]
+            # Call LoRA transformer with batch processing.
+            # NoLoRA pass-through is handled inside core/lora_transformer.py.
+            cmd = [
+                sys.executable,
+                'core/lora_transformer.py',
+                '--lora', lora_name,
+                '--batch',
+                '--input-folder', input_folder,
+                '--output-folder', output_folder
+            ]
 
-                # Force subprocess logs into the same per-run pipeline log.
-                run_log_file = os.getenv('SKICYCLERUN_RUN_LOG_FILE')
-                if run_log_file:
-                    cmd.extend(['--log-file', run_log_file])
-                
-                try:
-                    # Let stdout/stderr stream directly for progress and timing
-                    # Pass environment to ensure UI-set variables are inherited
-                    result = subprocess.run(cmd, check=True, text=True, env=os.environ.copy())
-                    logInfo(f"\n✅ {lora_name} processing complete")
-                except subprocess.CalledProcessError as e:
-                    logError(f"\n❌ {lora_name} processing failed: {e}")
-                    if e.stderr:
-                        logError(f"Error output:\n{e.stderr}")
-                    logError(f"❌ Pipeline stopped due to LoRA processing failure")
-                    raise  # Stop pipeline on failure
+            # Force subprocess logs into the same per-run pipeline log.
+            run_log_file = os.getenv('SKICYCLERUN_RUN_LOG_FILE')
+            if run_log_file:
+                cmd.extend(['--log-file', run_log_file])
+            
+            try:
+                # Let stdout/stderr stream directly for progress and timing
+                # Pass environment to ensure UI-set variables are inherited
+                result = subprocess.run(cmd, check=True, text=True, env=os.environ.copy())
+                logInfo(f"\n✅ {lora_name} processing complete")
+            except subprocess.CalledProcessError as e:
+                logError(f"\n❌ {lora_name} processing failed: {e}")
+                if e.stderr:
+                    logError(f"Error output:\n{e.stderr}")
+                logError(f"❌ Pipeline stopped due to LoRA processing failure")
+                raise  # Stop pipeline on failure
         
         logInfo(f"✅ LoRA processing complete - {len(loras_to_process)} styles processed")
     
@@ -1290,10 +1255,11 @@ class PipelineRunner:
         """Suggest logical next stages based on what was just completed"""
         # Define the natural pipeline progression
         pipeline_sequence = [
-            'cleanup',
             'export',
+            'cleanup',
             'metadata_extraction',
             'preprocessing',
+            'watermarking',
             'lora_processing',
             'post_lora_watermarking',
             's3_deployment'
@@ -1317,8 +1283,10 @@ class PipelineRunner:
             
             # Provide context for the next stage
             stage_descriptions = {
+                'export': '   Export photos from Apple Photos',
                 'metadata_extraction': '   Extract EXIF metadata and GPS coordinates from exported images',
                 'preprocessing': '   Resize and optimize images for LoRA processing',
+                'watermarking': '   Run compatibility pre-LoRA watermark stage',
                 'lora_processing': '   Apply artistic style filters with FLUX LoRA models',
                 'post_lora_watermarking': '   Add watermarks to LoRA-processed images',
                 's3_deployment': '   Deploy final images to AWS S3'

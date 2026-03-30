@@ -5,6 +5,9 @@ import json
 import logging
 import time
 import gc
+import shutil
+import threading
+import warnings
 
 # Add parent directory to path so imports work from core/ subdirectory
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -84,6 +87,40 @@ def report_memory_usage():
         logDebug("psutil not available for memory reporting")
     except Exception as e:
         logDebug(f"Memory reporting error: {e}")
+
+
+def suppress_known_safe_warnings():
+    """Suppress noisy third-party warnings that are known-safe in this pipeline."""
+    warnings.filterwarnings(
+        "ignore",
+        message=r"No LoRA keys associated to CLIPTextModel found with the prefix='text_encoder'.*",
+    )
+    warnings.filterwarnings(
+        "ignore",
+        message=r"User provided device_type of 'cuda', but CUDA is not available\. Disabling",
+        category=UserWarning,
+        module=r"torch\.amp\.autocast_mode",
+    )
+
+
+def run_with_heartbeat(action_label, func, *args, heartbeat_seconds=45, **kwargs):
+    """Run a long action and emit periodic status logs until completion."""
+    done = threading.Event()
+    start = time.time()
+
+    def _heartbeat_loop():
+        while not done.wait(timeout=heartbeat_seconds):
+            elapsed = int(time.time() - start)
+            mins = elapsed // 60
+            secs = elapsed % 60
+            logInfo(f"⏳ {action_label} still running... {mins}m {secs:02d}s elapsed")
+
+    thread = threading.Thread(target=_heartbeat_loop, daemon=True)
+    thread.start()
+    try:
+        return func(*args, **kwargs)
+    finally:
+        done.set()
 
 # ────────────────────────────────────────────────────────────────────────
 # CLI Argument Parsing
@@ -275,6 +312,86 @@ def save_result(image_path, result_image, config, input_base_folder=None, lora_n
     logInfo(f"📁 Saved: {output_path}")
     return output_path, metadata
 
+
+def save_passthrough_copy(image_path, config, input_base_folder=None, lora_name="NoLoRA"):
+    """Copy original bytes while using the same naming pattern as styled LoRA output."""
+    base_name = os.path.splitext(os.path.basename(image_path))[0]
+    timestamp = datetime.now().strftime("%d%H%M%S")
+    style = lora_name if lora_name else 'default'
+    source_ext = os.path.splitext(image_path)[1].lstrip('.').lower() or config.get("output_format", "webp")
+    output_name = f"{base_name}_{style}_{timestamp}.{source_ext}"
+
+    os.makedirs(config["output_folder"], exist_ok=True)
+
+    if input_base_folder and image_path.startswith(input_base_folder):
+        rel_path = os.path.relpath(os.path.dirname(image_path), input_base_folder)
+        if rel_path != ".":
+            output_subfolder = os.path.join(config["output_folder"], rel_path)
+            os.makedirs(output_subfolder, exist_ok=True)
+            output_path = os.path.join(output_subfolder, output_name)
+        else:
+            output_path = os.path.join(config["output_folder"], output_name)
+    else:
+        output_path = os.path.join(config["output_folder"], output_name)
+
+    shutil.copy2(image_path, output_path)
+
+    metadata = {
+        'seed': None,
+        'style': style,
+        'prompt': '',
+        'negative_prompt': '',
+        'num_inference_steps': 0,
+        'guidance_scale': 0,
+        'device': config.get('device'),
+        'precision': config.get('precision'),
+        'source_image': image_path,
+        'generated_at': datetime.now().isoformat(),
+        'passthrough': True,
+    }
+
+    try:
+        from core.master_store import MasterStore
+        from pathlib import Path as PathLib
+
+        master_path = config.get('paths', {}).get('master_catalog')
+        if master_path:
+            master_store = MasterStore(master_path)
+            original_source_path = None
+
+            if master_store.get(image_path):
+                original_source_path = image_path
+            else:
+                for path_str, entry in master_store.list_paths().items():
+                    prep_path = entry.get('derivatives', {}).get('preprocessed', {}).get('path')
+                    if prep_path == image_path:
+                        original_source_path = path_str
+                        break
+
+                if not original_source_path:
+                    image_stem = PathLib(image_path).stem
+                    for path_str in master_store.list_paths().keys():
+                        if PathLib(path_str).stem == image_stem:
+                            original_source_path = path_str
+                            break
+
+            if original_source_path:
+                lora_section = f"lora_generations.{style}"
+                patch = {
+                    lora_section: {
+                        'output_path': output_path,
+                        'output_name': output_name,
+                        **metadata
+                    }
+                }
+                master_store.update_entry(original_source_path, patch, stage='lora_processing')
+                logInfo(f"📝 Saved LoRA metadata → master.json['{PathLib(original_source_path).name}']['{lora_section}']")
+    except Exception as e:
+        logWarn(f"⚠️  Could not write NoLoRA metadata to master.json: {e}")
+
+    logInfo(f"📁 Saved: {output_path}")
+    return output_path, metadata
+
 # ────────────────────────────────────────────────────────────────────────
 # Batch image discovery (recursive)
 # ────────────────────────────────────────────────────────────────────────
@@ -290,6 +407,9 @@ def get_image_files(folder):
 # ────────────────────────────────────────────────────────────────────────
 def main():
     args = parse_args()
+
+    # Silence known-safe third-party warnings that create operator noise.
+    suppress_known_safe_warnings()
 
 
     # Note: logging setup is deferred until after we load the config so
@@ -628,15 +748,10 @@ def main():
         os.environ['PYTORCH_MPS_LOW_WATERMARK_RATIO'] = '0.7'   # Keep 70% for other processes
         logInfo("🧠 MPS memory management: disabled upper limit, 70% low watermark")
 
-    # ─────────────────────────────────────────────────────────────
-    # Load pipeline and apply LoRA
-    # ─────────────────────────────────────────────────────────────
-    if args.debug:
-        logDebug("Loading pipeline: black-forest-labs/FLUX.1-Kontext-dev")
-        
-    pipeline = load_pipeline("black-forest-labs/FLUX.1-Kontext-dev", device, config["precision"], config)
+    no_lora_passthrough = bool(args.lora and args.lora.lower() == "nolora")
+    lora_key = None
 
-    if args.lora:
+    if args.lora and not no_lora_passthrough:
         # Load LoRA from registry
         import json as json_module  # Explicit import to avoid shadowing
         try:
@@ -688,29 +803,59 @@ def main():
         except Exception as e:
             logError(f"Failed to load LoRA registry: {e}")
             sys.exit(1)
+    elif no_lora_passthrough:
+        lora_key = "NoLoRA"
+        lora_cfg = {"adapter_name": lora_key}
+        config["prompt"] = ""
+        config["negative_prompt"] = ""
+        logInfo("🔄 NoLoRA selected: pass-through copy mode enabled")
+        logInfo("⏭️  Skipping model load and inference; output naming matches LoRA outputs")
     else:
         lora_cfg = config.get("lora")
         if not lora_cfg:
             logError("No default LoRA specified in config. Use --lora <name> or add a 'lora' block to the config file.")
             sys.exit(1)
-        
-    if args.debug:
-        logDebug(f"Applying LoRA configuration: {lora_cfg}")
 
-    apply_lora(pipeline, lora_cfg, config)
+    if not no_lora_passthrough:
+        # ─────────────────────────────────────────────────────────────
+        # Load pipeline and apply LoRA
+        # ─────────────────────────────────────────────────────────────
+        if args.debug:
+            logDebug("Loading pipeline: black-forest-labs/FLUX.1-Kontext-dev")
 
-    # torch.compile must come AFTER apply_lora so PEFT can inject adapters first
-    compile_pipeline_transformer(pipeline, device=device)
+        logInfo("🧱 Loading FLUX pipeline components (this can take a few minutes on MPS)")
 
-    # Initial memory cleanup after model loading
-    cleanup_memory()
-    if args.debug:
-        report_memory_usage()
-    
-    # Initial memory cleanup after model loading
-    cleanup_memory()
-    if args.debug:
-        report_memory_usage()
+        pipeline = run_with_heartbeat(
+            "Pipeline loading",
+            load_pipeline,
+            "black-forest-labs/FLUX.1-Kontext-dev",
+            device,
+            config["precision"],
+            config,
+        )
+
+        if args.debug:
+            logDebug(f"Applying LoRA configuration: {lora_cfg}")
+
+        logInfo("🧩 Applying LoRA adapters to pipeline")
+
+        run_with_heartbeat("LoRA adapter application", apply_lora, pipeline, lora_cfg, config)
+
+        # torch.compile must come AFTER apply_lora so PEFT can inject adapters first
+        logInfo("⚙️  Preparing transformer runtime (compile may be skipped based on profile/device)")
+        run_with_heartbeat("Transformer preparation", compile_pipeline_transformer, pipeline, device=device)
+
+        # Initial memory cleanup after model loading
+        cleanup_memory()
+        if args.debug:
+            report_memory_usage()
+
+        # Initial memory cleanup after model loading
+        cleanup_memory()
+        if args.debug:
+            report_memory_usage()
+    else:
+        pipeline = None
 
     # ─────────────────────────────────────────────────────────────
     # Resolve image paths
@@ -787,6 +932,18 @@ def main():
             logInfo(f"   📍 Full path: {image_path}")
             
         try:
+            if no_lora_passthrough:
+                output_path, metadata = save_passthrough_copy(
+                    image_path,
+                    config,
+                    input_base_folder,
+                    lora_name=lora_key,
+                )
+                processed_count += 1
+                if args.verbose:
+                    logInfo(f"✅ NoLoRA pass-through saved for {os.path.basename(image_path)}")
+                continue
+
             if args.debug:
                 logDebug(f"Loading and preparing image: {image_path}")
                 logDebug(f"Max dimension: {config['max_dim']}, Preprocess: {config['preprocess']}")

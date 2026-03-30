@@ -18,6 +18,23 @@
         "unclassified"
       ],
       "enabled": true
+    },
+    {
+      "id": "kelowna-waterfront-path",
+      "name": "Delta Grand Okanagan Resort in Kelowna",
+      "lat": 49.891574999999996,
+      "lon": -119.49807777777778,
+      "radius_m": 100,
+      "line1": "Waterfront near the Delta Grand Okanagan Resort",
+      "line2": "Kelowna, BC",
+      "when_here_types": [
+        "residential",
+        "road",
+        "highway",
+        "service",
+        "unclassified"
+      ],
+      "enabled": true
     }
   ]
 }

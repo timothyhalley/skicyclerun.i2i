@@ -31,7 +31,7 @@ from .poi_osm_queries import (
     reverse_lookup_free,
 )
 from .poi_overpass import _limiter
-from .poi_selection import choose_line1_poi, derive_here_place
+from .poi_selection import choose_line1_poi, derive_here_place, select_watermark_pois
 
 # ---------------------------------------------------------------------------
 # Config loading (pipeline_config.json is one directory above core/)
@@ -66,9 +66,81 @@ def _load_copyright_string() -> str:
         return ""
 
 
+def _load_line1_rule_config() -> Dict[str, Any]:
+    """Load configurable LINE 1 rule settings from pipeline_config watermark block."""
+    defaults: Dict[str, Any] = {
+        "separator": " · ",
+        "context_types": [
+            "street",
+            "monument",
+            "park",
+            "trailhead",
+            "beach",
+            "peak",
+            "waterfall",
+            "memorial",
+            "attraction",
+            "forest",
+            "national_park",
+        ],
+        "experience_types_priority": [
+            "restaurant",
+            "cafe",
+            "hotel",
+            "view",
+            "monument",
+            "memorial",
+            "attraction",
+        ],
+    }
+    try:
+        with open(_PIPELINE_CONFIG_PATH, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+        wm_cfg = cfg.get("watermark", {}) if isinstance(cfg, dict) else {}
+        line1_cfg = wm_cfg.get("line1_rule", {}) if isinstance(wm_cfg, dict) else {}
+        if not isinstance(line1_cfg, dict):
+            return defaults
+        merged = {**defaults, **line1_cfg}
+        return merged
+    except Exception:
+        return defaults
+
+
+def _load_poi_filter_config() -> Dict[str, Any]:
+    """Load POI filtering knobs for watermark context selection."""
+    defaults: Dict[str, Any] = {
+        "max_distance_m": 75,
+        "limit": 3,
+        "allowed_categories": ["restaurant", "cafe", "bar", "hotel", "view", "landmark", "museum", "shop"],
+        "category_priority": {
+            "restaurant": 0,
+            "cafe": 1,
+            "bar": 2,
+            "hotel": 3,
+            "view": 4,
+            "landmark": 5,
+            "museum": 6,
+            "shop": 7,
+        },
+    }
+    try:
+        with open(_PIPELINE_CONFIG_PATH, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+        wm_cfg = cfg.get("watermark", {}) if isinstance(cfg, dict) else {}
+        pf_cfg = wm_cfg.get("poi_filter", {}) if isinstance(wm_cfg, dict) else {}
+        if not isinstance(pf_cfg, dict):
+            return defaults
+        merged = {**defaults, **pf_cfg}
+        return merged
+    except Exception:
+        return defaults
+
+
 # Module-level defaults (loaded once at import time).
 BILINGUAL_OUTPUT: bool = _load_bilingual_output(True)
 COPYRIGHT_STRING: str = _load_copyright_string()
+LINE1_RULE_CONFIG: Dict[str, Any] = _load_line1_rule_config()
+POI_FILTER_CONFIG: Dict[str, Any] = _load_poi_filter_config()
 
 
 # ---------------------------------------------------------------------------
@@ -128,9 +200,22 @@ def process_photo(
                 nearby_pois, get_natural_context_pois(lat, lon, radius_m=250)
             )
 
+        # Keep watermark context concise and readable.
+        nearby_pois = select_watermark_pois(
+            nearby_pois,
+            max_distance_m=float(POI_FILTER_CONFIG.get("max_distance_m", 75)),
+            limit=int(POI_FILTER_CONFIG.get("limit", 3)),
+            allowed_categories=POI_FILTER_CONFIG.get("allowed_categories"),
+            category_priority=POI_FILTER_CONFIG.get("category_priority"),
+        )
+
     here_place = derive_here_place(reverse_info, nearby_pois)
     line1, line2 = build_two_line_watermark(
-        reverse_info, here_place, nearby_pois, known_hint=known_hint
+        reverse_info,
+        here_place,
+        nearby_pois,
+        known_hint=known_hint,
+        line1_rule_config=LINE1_RULE_CONFIG,
     )
 
     # --- Bilingual merge ---
@@ -312,12 +397,21 @@ def build_watermark_from_cached_context(
             {
                 "name": poi.get("name"),
                 "type": poi_type,
+                "category": (poi.get("category") or "").strip().lower(),
                 "distance_m": poi.get("distance_m"),
                 "bearing_deg": poi.get("bearing_deg"),
                 "bearing_cardinal": poi.get("bearing_cardinal"),
                 "tags": poi.get("tags") or {},
             }
         )
+
+    nearby_pois = select_watermark_pois(
+        nearby_pois,
+        max_distance_m=float(POI_FILTER_CONFIG.get("max_distance_m", 75)),
+        limit=int(POI_FILTER_CONFIG.get("limit", 3)),
+        allowed_categories=POI_FILTER_CONFIG.get("allowed_categories"),
+        category_priority=POI_FILTER_CONFIG.get("category_priority"),
+    )
 
     known_hint = None
     if lat is not None and lon is not None:
@@ -328,7 +422,11 @@ def build_watermark_from_cached_context(
 
     here_place = derive_here_place(reverse_info, nearby_pois)
     line1, line2 = build_two_line_watermark(
-        reverse_info, here_place, nearby_pois, known_hint=known_hint
+        reverse_info,
+        here_place,
+        nearby_pois,
+        known_hint=known_hint,
+        line1_rule_config=LINE1_RULE_CONFIG,
     )
 
     # Bilingual translation in cached-only mode is intentionally skipped because

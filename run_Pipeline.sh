@@ -8,6 +8,7 @@
 # Usage:
 #   ./run_Pipeline.sh                          # run all default stages
 #   ./run_Pipeline.sh --stages lora_processing
+#   ./run_Pipeline.sh --lora_processing        # shorthand for --stages lora_processing
 #   ./run_Pipeline.sh --stages lora_processing post_lora_watermarking s3_deployment
 # ============================================================================
 set -euo pipefail
@@ -48,17 +49,49 @@ export PYTORCH_MPS_LOW_WATERMARK_RATIO=0.7
 export OMP_NUM_THREADS=1
 export TOKENIZERS_PARALLELISM=false
 
+# ── Stage shorthand normalization ────────────────────────────────────────────
+# Allow ergonomic one-flag stage calls like:
+#   ./run_Pipeline.sh --lora_processing
+# This maps to:
+#   ./run_Pipeline.sh --stages lora_processing
+normalized_args=()
+shortcut_stages=()
+has_stages_flag=0
+
+for arg in "$@"; do
+  case "$arg" in
+    --stages|-stages)
+      has_stages_flag=1
+      normalized_args+=("$arg")
+      ;;
+    --export|--cleanup|--metadata_extraction|--preprocessing|--watermarking|--lora_processing|--post_lora_watermarking|--s3_deployment)
+      shortcut_stages+=("${arg#--}")
+      ;;
+    *)
+      normalized_args+=("$arg")
+      ;;
+  esac
+done
+
+if [[ ${#shortcut_stages[@]} -gt 0 ]]; then
+  if [[ $has_stages_flag -eq 1 ]]; then
+    printf '❌  Do not mix stage shorthand flags with --stages. Use one style.\n' >&2
+    exit 2
+  fi
+  normalized_args=(--stages "${shortcut_stages[@]}" "${normalized_args[@]}")
+fi
+
 # ── Launch ────────────────────────────────────────────────────────────────────
 printf '🚀 Starting pipeline (Python: %s)\n' "$("$PYTHON_CMD" --version 2>&1)"
 printf '📋 Command: %s pipeline.py' "$PYTHON_CMD"
-for arg in "$@"; do
+for arg in "${normalized_args[@]}"; do
   printf ' %q' "$arg"
 done
 printf '\n'
 
 if command -v caffeinate >/dev/null 2>&1; then
-  exec caffeinate -dimsu "$PYTHON_CMD" pipeline.py "$@"
+  exec caffeinate -dimsu "$PYTHON_CMD" pipeline.py "${normalized_args[@]}"
 else
   printf '⚠️  caffeinate not found; running without sleep prevention\n'
-  exec "$PYTHON_CMD" pipeline.py "$@"
+  exec "$PYTHON_CMD" pipeline.py "${normalized_args[@]}"
 fi

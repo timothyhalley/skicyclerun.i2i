@@ -98,6 +98,168 @@ def get_feature_english_name(feature: Optional[Dict[str, Any]]) -> str:
     return ""
 
 
+def _normalize_anchor_type(poi: Dict[str, Any]) -> str:
+    """Map POI type/category aliases into stable anchor buckets."""
+    raw_type = (poi.get("type") or "").strip().lower()
+    raw_category = (poi.get("category") or "").strip().lower()
+    token = raw_type or raw_category
+
+    if token in {"restaurant"}:
+        return "restaurant"
+    if token in {"cafe", "coffee_shop"}:
+        return "cafe"
+    if token in {"hotel", "lodging", "resort"}:
+        return "hotel"
+    if token in {"viewpoint"}:
+        return "view"
+    if token in {"trailhead", "path", "footway", "trail"}:
+        return "trailhead"
+    if token in {"park", "protected_area", "national_park"}:
+        return "park"
+    if token in {"mountain", "peak"}:
+        return "peak"
+    if token in {"waterfall", "falls"}:
+        return "waterfall"
+    if token in {"memorial"}:
+        return "memorial"
+    if token in {"attraction"}:
+        return "attraction"
+    if token in {"monument", "historic", "historic_site", "artwork", "gallery", "museum"}:
+        return "monument"
+    if token in {"forest", "wood", "woodland"}:
+        return "forest"
+    if token in {"street", "road", "highway", "living_street", "residential", "secondary", "pedestrian"}:
+        return "street"
+    return token
+
+
+def _pick_context_anchor(
+    reverse_info: Dict[str, Any],
+    here_place: Optional[Dict[str, Any]],
+    nearby_pois: List[Dict[str, Any]],
+    known_hint: Optional[Dict[str, Any]],
+    context_types: Optional[List[str]] = None,
+) -> str:
+    """Pick left side of LINE 1: hint/street/landscape/historic context."""
+    if known_hint:
+        hinted = (known_hint.get("line1") or known_hint.get("name") or "").strip()
+        if hinted:
+            return hinted
+
+    allowed_context_types = {
+        str(v).strip().lower()
+        for v in (
+            context_types
+            or [
+                "street", "monument", "park", "trailhead", "beach", "peak",
+                "waterfall", "memorial", "attraction", "forest", "national_park",
+            ]
+        )
+    }
+
+    # Prefer the here place when it looks meaningful.
+    if here_place:
+        here_name = (here_place.get("name") or "").strip()
+        here_type = _normalize_anchor_type(here_place)
+        if here_name and here_type in allowed_context_types:
+            return here_name
+
+    # Next: nearest contextual POI.
+    context_candidates = []
+    for poi in nearby_pois:
+        name = (poi.get("name") or "").strip()
+        if not name:
+            continue
+        anchor_type = _normalize_anchor_type(poi)
+        if anchor_type not in allowed_context_types:
+            continue
+        dist = float(poi.get("distance_m") or 9999)
+        context_candidates.append((dist, name))
+
+    if context_candidates:
+        context_candidates.sort(key=lambda x: x[0])
+        return context_candidates[0][1]
+
+    # Final fallback: reverse approximation.
+    approx = (reverse_info.get("approximation") or "").strip()
+    if approx:
+        return approx
+
+    return "Unknown location"
+
+
+def _pick_experience_anchor(
+    nearby_pois: List[Dict[str, Any]],
+    context_anchor: str,
+    experience_types_priority: Optional[List[str]] = None,
+) -> str:
+    """Pick right side of LINE 1: cafe/restaurant/hotel/view/historic POI."""
+    if experience_types_priority:
+        priority = {
+            str(v).strip().lower(): idx
+            for idx, v in enumerate(experience_types_priority)
+            if str(v).strip()
+        }
+    else:
+        priority = {
+            "restaurant": 0,
+            "cafe": 1,
+            "hotel": 2,
+            "view": 3,
+            "monument": 4,
+            "memorial": 5,
+            "attraction": 6,
+        }
+
+    candidates = []
+    for poi in nearby_pois:
+        name = (poi.get("name") or "").strip()
+        if not name or name == context_anchor:
+            continue
+        anchor_type = _normalize_anchor_type(poi)
+        if anchor_type not in priority:
+            continue
+        dist = float(poi.get("distance_m") or 9999)
+        candidates.append((dist, priority[anchor_type], name))
+
+    if not candidates:
+        return ""
+
+    # Sort by distance first, then semantic priority.
+    candidates.sort(key=lambda x: (x[0], x[1]))
+    return candidates[0][2]
+
+
+def _build_rule_line1(
+    reverse_info: Dict[str, Any],
+    here_place: Optional[Dict[str, Any]],
+    nearby_pois: List[Dict[str, Any]],
+    known_hint: Optional[Dict[str, Any]],
+    line1_rule_config: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Build the requested LINE 1 rule: {context} · {experience}."""
+    rule_cfg = line1_rule_config or {}
+    separator = str(rule_cfg.get("separator", " · "))
+    context_types = rule_cfg.get("context_types")
+    experience_types_priority = rule_cfg.get("experience_types_priority")
+
+    context_anchor = _pick_context_anchor(
+        reverse_info,
+        here_place,
+        nearby_pois,
+        known_hint,
+        context_types=context_types,
+    )
+    experience_anchor = _pick_experience_anchor(
+        nearby_pois,
+        context_anchor,
+        experience_types_priority=experience_types_priority,
+    )
+    if experience_anchor:
+        return f"{context_anchor}{separator}{experience_anchor}"
+    return context_anchor
+
+
 # ---------------------------------------------------------------------------
 # Two-line watermark assembly
 # ---------------------------------------------------------------------------
@@ -107,6 +269,7 @@ def build_two_line_watermark(
     here_place: Optional[Dict[str, Any]],
     nearby_pois: List[Dict[str, Any]],
     known_hint: Optional[Dict[str, Any]] = None,
+    line1_rule_config: Optional[Dict[str, Any]] = None,
 ) -> Tuple[str, str]:
     """Assemble (line1, line2) from here-place, nearby POIs, and optional hint.
 
@@ -119,87 +282,12 @@ def build_two_line_watermark(
     6. HERE place name alone.
     7. Reverse-geocode approximation.
     """
-    if known_hint and known_hint.get("line1"):
-        line1 = known_hint["line1"]
-        line2 = known_hint.get("line2") or format_line2(reverse_info)
-        return line1, line2
-
-    best_line1_poi = choose_line1_poi(here_place, nearby_pois)
-    approx = (reverse_info.get("approximation") or "Unknown location").strip()
-
-    if best_line1_poi:
-        poi_name = (best_line1_poi.get("name") or "").strip()
-        poi_type = (best_line1_poi.get("type") or "").lower()
-        dist = best_line1_poi.get("distance_m")
-        direction = best_line1_poi.get("bearing_cardinal")
-
-        # --- Artwork: show with distance then pull in nearest notable landmark ---
-        if poi_name and poi_type == "artwork":
-            art_part = (
-                f"{poi_name} ({dist:.0f}m {direction})"
-                if dist not in (None, 0) and direction
-                else (f"{poi_name} ({dist:.0f}m)" if dist not in (None, 0) else poi_name)
-            )
-            ctx_candidates = []
-            for candidate in nearby_pois:
-                c_name = (candidate.get("name") or "").strip()
-                c_type = (candidate.get("type") or "").lower()
-                c_dist = float(candidate.get("distance_m") or 9999)
-                if not c_name or c_name == poi_name or c_type == "artwork":
-                    continue
-                if c_type in LINE1_PRIORITY and c_dist <= 150:
-                    ctx_candidates.append((LINE1_PRIORITY[c_type], -c_dist, candidate))
-            if ctx_candidates:
-                ctx_candidates.sort(reverse=True)
-                ctx = ctx_candidates[0][2]
-                ctx_name = (ctx.get("name") or "").strip()
-                ctx_dist = ctx.get("distance_m")
-                ctx_dir = ctx.get("bearing_cardinal")
-                if ctx_dist not in (None, 0) and ctx_dir:
-                    line1 = f"{art_part} near {ctx_name} ({ctx_dist:.0f}m {ctx_dir})"
-                else:
-                    line1 = f"{art_part} near {ctx_name}"
-            else:
-                line1 = art_part
-            return line1, format_line2(reverse_info)
-
-        # --- Trail: resolve to a larger area context when available ---
-        if poi_name and poi_type in TRAIL_TYPES:
-            area_candidates = []
-            for candidate in nearby_pois:
-                c_name = (candidate.get("name") or "").strip()
-                c_type = (candidate.get("type") or "").lower()
-                c_dist = float(candidate.get("distance_m") or 9999)
-                if not c_name or c_name == poi_name:
-                    continue
-                if c_type in AREA_CONTEXT_TYPES and c_dist <= MAX_NATURAL_CONTEXT_DISTANCE_M:
-                    area_candidates.append((c_dist, candidate))
-            if area_candidates:
-                area_candidates.sort(key=lambda x: x[0])
-                area_name = area_candidates[0][1].get("name")
-                if area_name:
-                    return f"{poi_name} on {area_name}", format_line2(reverse_info)
-
-        # --- Direct named POI with distance/direction ---
-        if poi_name and dist not in (None, 0) and poi_type in DIRECT_POI_LINE1_TYPES:
-            line1 = f"{poi_name} ({dist:.0f}m {direction})" if direction else f"{poi_name} ({dist:.0f}m)"
-
-        elif poi_name and here_place:
-            here_name = (here_place.get("name") or "").strip()
-            here_type = (here_place.get("type") or "").lower()
-            if here_name and poi_name and here_name != poi_name and here_type in LOW_VALUE_HERE_TYPES:
-                if dist is not None and direction:
-                    line1 = f"{here_name} near {poi_name} ({dist:.0f}m {direction})"
-                else:
-                    line1 = f"{here_name} near {poi_name}"
-            else:
-                line1 = poi_name
-
-        elif poi_name:
-            line1 = poi_name
-        else:
-            line1 = approx
-    else:
-        line1 = approx
-
-    return line1, format_line2(reverse_info)
+    line1 = _build_rule_line1(
+        reverse_info,
+        here_place,
+        nearby_pois,
+        known_hint,
+        line1_rule_config=line1_rule_config,
+    )
+    line2 = (known_hint or {}).get("line2") or format_line2(reverse_info)
+    return line1, line2

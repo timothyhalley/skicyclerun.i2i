@@ -7,6 +7,7 @@
       "cleanup",
       "metadata_extraction",
       "preprocessing",
+      "watermarking",
       "lora_processing",
       "post_lora_watermarking",
       "s3_deployment"
@@ -110,9 +111,60 @@
     "enabled": true,
     "bilingual_output": true,
     "layout": "two_line",
-    "_comment_line1": "LINE 1 comes from nearby POI category templates (clean/scenic/minimal)",
-    "_comment_line2": "LINE 2 is programmatic_watermark (concise location, no postal code)",
+    "_comment_line1": "LINE 1 uses the explicit rule {context anchor}{separator}{experience anchor}, built from cached hints/roads/landmarks plus a nearby human-facing POI.",
+    "_comment_line2": "LINE 2 is programmatic location text plus copyright branding.",
     "line1_style": "clean",
+    "line1_rule": {
+      "_comment": "Configurable LINE 1 template: {context}{separator}{experience}",
+      "separator": " | ",
+      "context_types": [
+        "street",
+        "monument",
+        "park",
+        "trailhead",
+        "beach",
+        "peak",
+        "waterfall",
+        "memorial",
+        "attraction",
+        "forest",
+        "national_park"
+      ],
+      "experience_types_priority": [
+        "restaurant",
+        "cafe",
+        "hotel",
+        "view",
+        "monument",
+        "memorial",
+        "attraction"
+      ]
+    },
+    "poi_filter": {
+      "_comment": "Nearby POI filtering for readable watermark context before LINE 1 composition",
+      "max_distance_m": 75,
+      "limit": 3,
+      "allowed_categories": [
+        "restaurant",
+        "cafe",
+        "bar",
+        "hotel",
+        "view",
+        "landmark",
+        "museum",
+        "shop"
+      ],
+      "category_priority": {
+        "restaurant": 0,
+        "cafe": 1,
+        "bar": 2,
+        "hotel": 3,
+        "view": 4,
+        "landmark": 5,
+        "museum": 6,
+        "shop": 7
+      }
+    },
     "line1_max_words": 10,
     "line1_poi_max_distance_m": 120,
     "line1_style_options": ["clean", "scenic", "minimal"],
@@ -165,7 +217,14 @@
     "batch_mode": true,
     "preserve_metadata": true,
     "_loras_to_process_comment": "Special entries: 'NoLoRA' copies scaled images without style transfer (pass-through mode). Include as first entry to generate unmodified baseline images alongside stylized versions.",
-    "loras_to_process": ["NoLoRA"],
+    "loras_to_process": [
+      "NoLoRA",
+      "PencilDrawing",
+      "FractalGeometry",
+      "Afremov",
+      "Gorillaz",
+      "Origami"
+    ],
     "_Available_loras": [
       "PencilDrawing",
       "FractalGeometry",

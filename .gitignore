@@ -95,3 +95,6 @@ debug_*.png
 geoScripts/data/
 # Dead code archive - excluded from version control
 .deadcode/
+
+# Machine snapshot profiles
+performance/current-*.txt

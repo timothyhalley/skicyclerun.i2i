@@ -75,3 +75,4 @@ timezonefinder
 # HTTP + system utilities
 requests
 psutil
+boto3
