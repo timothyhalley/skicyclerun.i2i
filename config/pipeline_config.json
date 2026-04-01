@@ -14,8 +14,8 @@
     ]
   },
   "paths": {
-    "lib_root": "${SKICYCLERUN_LIB_ROOT:/Volumes/MySSD2/skicyclerun.i2i}",
-    "huggingface_cache": "${HUGGINGFACE_CACHE_LIB:/Volumes/MySSD2/huggingface}",
+    "lib_root": "${SKICYCLERUN_LIB_ROOT:/Volumes/MySSD/skicyclerun.i2i}",
+    "huggingface_cache": "${HUGGINGFACE_CACHE_LIB:/Volumes/MySSD/huggingface}",
     "lora_models": "{lib_root}/models/lora",
     "pipeline_base": "{lib_root}/pipeline",
     "archive_albums": "{pipeline_base}/archive/albums",
@@ -277,8 +277,8 @@
   "python_environment": {
     "python_version": "3.13.12",
     "profile": "performance/MBP_TestProfile2.txt",
-    "lib_root": "/Volumes/MySSD2/skicyclerun.i2i",
-    "huggingface_cache": "/Volumes/MySSD2/huggingface",
+    "lib_root": "/Volumes/MySSD/skicyclerun.i2i",
+    "huggingface_cache": "/Volumes/MySSD/huggingface",
     "last_setup": "2026-03-28T03:15:26Z"
   }
 }

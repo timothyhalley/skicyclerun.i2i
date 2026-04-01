@@ -42,8 +42,8 @@ comment lines at the top for machine metadata:
 
 ```
 # python_version: 3.13.12
-# lib_root: /Volumes/MySSD2/skicyclerun.i2i
-# huggingface_cache: /Volumes/MySSD2/huggingface
+# lib_root: /Volumes/MySSD/skicyclerun.i2i
+# huggingface_cache: /Volumes/MySSD/huggingface
 # device: mps
 # precision: bfloat16
 # pytorch_enable_mps_fallback: 1
