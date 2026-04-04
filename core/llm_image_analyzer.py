@@ -1,7 +1,7 @@
 """
 LLM Image Analyzer
-Analyzes images using ministral-3:8b vision model via Ollama
-Generates structured JSON output with description, primary subject, and watermark
+Analyzes images using gemma4:latest via Ollama
+Generates terse JSON for two watermark lines
 """
 
 import base64
@@ -10,24 +10,34 @@ import time
 import requests
 from pathlib import Path
 from PIL import Image
-from typing import Dict, Optional, List
+from typing import Any, Dict, Optional, List
 from io import BytesIO
 
 
 class LLMImageAnalyzer:
-    """Analyze images with vision LLM using ministral-3:8b"""
+    """Analyze images with a terse factual watermark prompt."""
     
-    def __init__(self, endpoint: str = "http://localhost:11434", model: str = "ministral-3:8b"):
+    def __init__(
+        self,
+        endpoint: str = "http://localhost:11434",
+        model: str = "gemma4:latest",
+        max_line1_words: int = 8,
+        max_line2_words: int = 14,
+    ):
         """
         Initialize LLM image analyzer
         
         Args:
             endpoint: Ollama API endpoint
-            model: Vision model to use (ministral-3:8b)
+            model: Vision model to use (gemma4:latest)
+            max_line1_words: Maximum words allowed in returned line1 candidate
+            max_line2_words: Maximum words allowed in returned line2 candidate
         """
         self.endpoint = endpoint.rstrip('/')
         self.model = model
         self.generate_url = f"{self.endpoint}/api/generate"
+        self.max_line1_words = max(3, int(max_line1_words))
+        self.max_line2_words = max(6, int(max_line2_words))
     
     def _encode_image_base64(self, image_path: str) -> str:
         """
@@ -55,9 +65,18 @@ class LLMImageAnalyzer:
             
             return base64.b64encode(img_bytes).decode("utf-8")
     
-    def _build_prompt(self, nearby_pois: List[Dict], location: Dict, gps: Dict, poi_search: Dict) -> str:
+    def _build_prompt(
+        self,
+        cache_key: str,
+        geo_entry: Dict[str, Any],
+        nearby_pois: List[Dict],
+        location: Dict,
+        gps: Dict,
+        poi_search: Dict,
+        photo_name: str = "",
+    ) -> str:
         """
-        Build structured prompt for vision LLM
+        Build terse prompt for vision/text LLM
         
         Args:
             nearby_pois: Array of POI objects with name, category, distance_m, source
@@ -88,32 +107,51 @@ class LLMImageAnalyzer:
         osm_place_type = location.get('type', '')
         provider = location.get('provider', '')
         
-        # Extract POI search metadata
-        poi_attempted = poi_search.get('attempted', False)
         search_radius = poi_search.get('search_radius_m', 'unknown')
-        max_distance = poi_search.get('max_distance_m', 'unknown')
-        heading_filter = poi_search.get('heading_filter_used', False)
+        fallback_context = poi_search.get('fallback_context') or {}
+        fallback_anchor = str(fallback_context.get('anchor') or '').strip()
+        fallback_summary = str(fallback_context.get('summary') or '').strip()
+        fallback_type = str(fallback_context.get('type') or 'location').strip()
+        fallback_formatted = str(
+            fallback_context.get('formatted') or fallback_context.get('display_name') or location_formatted
+        ).strip()
         
-        # Format POI context for the LLM
         poi_context = ""
         if nearby_pois:
             poi_items = []
-            for poi in nearby_pois[:10]:  # Limit to top 10
+            for poi in nearby_pois[:5]:
                 name = poi.get('name', 'Unknown')
                 category = poi.get('category', 'unknown')
                 distance = poi.get('distance_m', 0)
                 bearing = poi.get('bearing_cardinal', '')
-                source = poi.get('source', 'unknown')
-                poi_items.append(f"  - {name} ({category}, {distance}m {bearing}, source: {source})")
+                poi_items.append(f"  - {name} ({category}, {distance}m {bearing})")
             poi_context = "\n".join(poi_items)
+        elif fallback_summary:
+            poi_context = (
+                f"  - Base location context: {fallback_summary} ({fallback_type})"
+            )
+
+        geo_payload = dict(geo_entry or {})
+        geo_payload.pop('LLM_Watermark_Line1', None)
+        geo_payload.pop('LLM_Watermark_Line2', None)
+        geo_json = json.dumps(geo_payload, indent=2, ensure_ascii=False)
         
         prompt = f"""You MUST return valid JSON only. Do not include any text outside the JSON object.
 
-You are analyzing a photograph with the following metadata:
+You are a highly professional, objective content specialist writing terse factual watermark text.
+
+Your task is to create exactly two short watermark lines for one geotagged photo entry.
+The output must be efficient, factual, direct, and free of noise.
+
+PHOTO:
+    File Name: {photo_name or 'N/A'}
+
+COORDINATE KEY:
+    {cache_key}
 
 GPS COORDINATES:
-  Latitude: {lat}, Longitude: {lon}
-  Altitude: {altitude}m, Heading: {heading}° {cardinal}
+    Latitude: {lat}, Longitude: {lon}
+    Altitude: {altitude}m, Heading: {heading}° {cardinal}
 
 LOCATION:
   City: {city or 'N/A'}
@@ -126,42 +164,57 @@ GEOCODING (from {provider}):
   OSM Type: {osm_type or 'N/A'}, Category: {osm_category or 'N/A'}, Place Type: {osm_place_type or 'N/A'}
   POI at exact location: {'Yes' if poi_found else 'No'}
 
+BASE LOCATION CONTEXT:
+    Anchor: {fallback_anchor or 'N/A'}
+    Summary: {fallback_summary or 'N/A'}
+    Type: {fallback_type or 'N/A'}
+    Area: {fallback_formatted or 'N/A'}
+
 NEARBY POINTS OF INTEREST ({len(nearby_pois)} within {search_radius}m):
 {poi_context if poi_context else "  None found"}
 
+FULL GEO ENTRY JSON:
+{geo_json}
+
 TASK:
 Return ONLY valid JSON with these fields:
-- description: 5-10 factual sentences about the subject, using city/country context
-- primary_subject: 2-6 word phrase naming the main subject
-- watermark_line1: A catchy, direct phrase describing the key subject/scene (10 words max)
-- watermark_line2: City, State (we will add copyright programmatically)
+- LLM_Watermark_Line1: no more than {self.max_line1_words} words
+- LLM_Watermark_Line2: no more than {self.max_line2_words} words
 
 RULES:
-- No promotional adjectives
-- No photo references
-- watermark_line1: Focus on WHAT you see (subject/scene), NOT location
-- watermark_line2: Just extract city and state from GPS data above
-- If uncertain, leave fields empty
+- Output must be exactly two short factual lines expressed as JSON values
+- No paragraph, no explanation, no options, no extra keys
+- No promotional adjectives, no mood words, no cinematic language
+- LINE 1 must summarize the immediate physical reality or situational context
+- LINE 1 must not mention the city name unless unavoidable
+- LINE 1 should prefer road, trail, park, area, or nearest grounded POI context
+- LINE 2 must be a deterministic location stamp grounded only in provided metadata
+- LINE 2 format target: [Specific street/area if important] | [City], [State/Province], [Country]
+- If the street or area is weak, omit it and use the strongest deterministic location stamp
+- If nearby POIs are empty, use BASE LOCATION CONTEXT only as grounding; do not invent POIs
+- Reuse exact names from metadata when possible
+- If uncertain, leave the value empty rather than inventing text
 
 OUTPUT FORMAT:
 {{
   "llm_model": "{self.model}",
   "llm_analysis_time": 0.0,
-  "description": "",
-  "primary_subject": "",
-  "watermark_line1": "",
-  "watermark_line2": ""
+    "LLM_Watermark_Line1": "",
+    "LLM_Watermark_Line2": ""
 }}"""
         
         return prompt
     
     def analyze_image(
-        self, 
-        image_path: str,
+        self,
+        image_path: Optional[str],
+        cache_key: str,
+        geo_entry: Dict[str, Any],
         nearby_pois: List[Dict],
         location: Dict,
         gps: Dict,
         poi_search: Dict,
+        photo_name: str = "",
         timeout: int = 30,
         debug_output_path: Optional[str] = None
     ) -> Optional[Dict]:
@@ -178,37 +231,49 @@ OUTPUT FORMAT:
             debug_output_path: If provided, save prompt request to this JSON file
             
         Returns:
-            Dict with llm_model, llm_analysis_time, description, primary_subject, watermark
+            Dict with llm_model, llm_analysis_time, LLM_Watermark_Line1, LLM_Watermark_Line2
             or None if analysis fails
         """
         try:
             start_time = time.time()
             
-            # Encode image
-            base64_image = self._encode_image_base64(image_path)
-            
             # Build prompt
-            prompt = self._build_prompt(nearby_pois, location, gps, poi_search)
+            prompt = self._build_prompt(
+                cache_key=cache_key,
+                geo_entry=geo_entry,
+                nearby_pois=nearby_pois,
+                location=location,
+                gps=gps,
+                poi_search=poi_search,
+                photo_name=photo_name,
+            )
             
-            # Construct multi-modal payload
-            payload = {
+            payload: Dict[str, Any] = {
                 "model": self.model,
                 "prompt": prompt,
-                "images": [base64_image],
                 "stream": False,
                 "options": {
-                    "temperature": 0.2,  # Lower for more deterministic results
-                    "top_p": 0.8         # Fewer rare tokens for consistency
+                    "temperature": 0.1,
+                    "top_p": 0.7,
                 }
+            }
+            if image_path:
+                payload["images"] = [self._encode_image_base64(image_path)]
+
+            payload = {
+                **payload
             }
             
             # DEBUG: Save prompt request to file if path provided
             if debug_output_path:
                 debug_data = {
                     "image_path": image_path,
+                    "cache_key": cache_key,
+                    "photo_name": photo_name,
                     "model": self.model,
                     "endpoint": self.generate_url,
                     "gps": gps,
+                    "geo_entry": geo_entry,
                     "location": location,
                     "poi_search": poi_search,
                     "nearby_pois": nearby_pois,
@@ -282,36 +347,26 @@ OUTPUT FORMAT:
                     analysis_data['llm_analysis_time'] = round(elapsed_time, 2)
                     analysis_data['llm_model'] = self.model
                     
-                    # Validate required fields
-                    required_fields = ['description', 'primary_subject', 'watermark_line1', 'watermark_line2']
+                    required_fields = ['LLM_Watermark_Line1', 'LLM_Watermark_Line2']
                     if not all(field in analysis_data for field in required_fields):
                         print(f"⚠️  Missing required fields in LLM response: {analysis_data.keys()}")
                         return None
                     
-                    # Clean all string fields - strip leading/trailing whitespace and newlines
                     for field in required_fields:
                         if field in analysis_data and isinstance(analysis_data[field], str):
-                            # Strip whitespace and newlines
                             cleaned = analysis_data[field].strip().lstrip('\n').strip()
-                            # Strip common markdown formatting if present
                             import re
-                            cleaned = re.sub(r'\*\*([^*]+)\*\*', r'\1', cleaned)  # **bold**
-                            cleaned = re.sub(r'\*([^*]+)\*', r'\1', cleaned)      # *italic*
-                            cleaned = re.sub(r'__([^_]+)__', r'\1', cleaned)      # __bold__
-                            cleaned = re.sub(r'_([^_]+)_', r'\1', cleaned)        # _italic_
+                            cleaned = re.sub(r'\*\*([^*]+)\*\*', r'\1', cleaned)
+                            cleaned = re.sub(r'\*([^*]+)\*', r'\1', cleaned)
+                            cleaned = re.sub(r'__([^_]+)__', r'\1', cleaned)
+                            cleaned = re.sub(r'_([^_]+)_', r'\1', cleaned)
+                            cleaned = " ".join(cleaned.split())
                             analysis_data[field] = cleaned
-                    
-                    # Truncate watermark_line1 if too long
-                    watermark_line1 = analysis_data.get('watermark_line1', '')
-                    if len(watermark_line1) > 100:
-                        watermark_line1 = watermark_line1[:97] + "..."
-                        analysis_data['watermark_line1'] = watermark_line1
-                    
-                    # Truncate watermark_line2 if too long
-                    watermark_line2 = analysis_data.get('watermark_line2', '')
-                    if len(watermark_line2) > 100:
-                        watermark_line2 = watermark_line2[:97] + "..."
-                        analysis_data['watermark_line2'] = watermark_line2
+
+                    line1_words = analysis_data.get('LLM_Watermark_Line1', '').split()
+                    line2_words = analysis_data.get('LLM_Watermark_Line2', '').split()
+                    analysis_data['LLM_Watermark_Line1'] = " ".join(line1_words[: self.max_line1_words])[:100]
+                    analysis_data['LLM_Watermark_Line2'] = " ".join(line2_words[: self.max_line2_words])[:140]
                     
                     return analysis_data
                     
@@ -337,10 +392,11 @@ OUTPUT FORMAT:
             return None
     
     def generate_fallback(
-        self, 
+        self,
         location_formatted: str,
         nearby_pois: List[Dict],
-        date_taken: str = None
+        poi_search: Optional[Dict] = None,
+        geo_entry: Optional[Dict[str, Any]] = None,
     ) -> Dict:
         """
         Generate fallback analysis without vision LLM
@@ -348,27 +404,42 @@ OUTPUT FORMAT:
         Args:
             location_formatted: Human-readable location string
             nearby_pois: Array of POI objects
-            date_taken: Optional date string
+            poi_search: Optional POI search metadata including fallback_context
+            geo_entry: Optional raw geocode cache entry
             
         Returns:
             Basic analysis dict with minimal data
         """
-        # Extract first POI name if available
         poi_name = None
-        poi_category = 'location'
+        anchor = None
         if nearby_pois and len(nearby_pois) > 0:
             poi_name = nearby_pois[0].get('name')
-            poi_category = nearby_pois[0].get('category', 'location')
-        
-        # Build simple watermarks
-        watermark_line1 = poi_name or 'Unknown Subject'
-        watermark_line2 = location_formatted
+        else:
+            fallback_context = (poi_search or {}).get('fallback_context') or {}
+            anchor = fallback_context.get('anchor') or fallback_context.get('summary')
+            poi_name = anchor
+
+        geo_entry = geo_entry or {}
+        road = str(geo_entry.get('road') or '').strip()
+        city = str(geo_entry.get('city') or '').strip()
+        state = str(geo_entry.get('state') or '').strip()
+        country = str(geo_entry.get('country') or '').strip()
+
+        line1_value = road or poi_name or location_formatted or 'Unknown Place'
+        line2_parts = []
+        if road and city:
+            line2_parts.append(road)
+        locality = ', '.join([part for part in [city, state, country] if part])
+        if locality:
+            line2_parts.append(locality)
+        line2_value = ' | '.join(line2_parts) if line2_parts else location_formatted
+
+        line1_value = " ".join(str(line1_value).split()[: self.max_line1_words])[:100]
+        line2_value = " ".join(str(line2_value).split()[: self.max_line2_words])[:140]
         
         return {
             'llm_model': 'fallback',
             'llm_analysis_time': 0.0,
-            'description': f"Photo taken at {location_formatted}. Located near {poi_name}." if poi_name else f"Photo taken at {location_formatted}",
-            'primary_subject': poi_name or location_formatted,
-            'watermark_line1': watermark_line1[:100],
-            'watermark_line2': watermark_line2[:100]
+            'LLM_Watermark_Line1': line1_value,
+            'LLM_Watermark_Line2': line2_value,
         }

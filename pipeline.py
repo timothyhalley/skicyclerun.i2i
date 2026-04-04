@@ -17,6 +17,7 @@ from utils.time_utils import utc_now_iso_z
 from typing import Dict, List
 from core.geo_extractor import GeoExtractor
 from core.image_preprocessor import ImagePreprocessor
+from core.llm_image_analyzer import LLMImageAnalyzer
 from core.master_store import MasterStore
 from utils.logger import logInfo, logError, logWarn
 
@@ -95,6 +96,7 @@ class PipelineRunner:
     def __init__(
         self,
         config_path: str = "config/pipeline_config.json",
+        album: str | None = None,
         cache_only_geocode: bool | None = None,
         sweep_path_contains: str | None = None,
         sweep_limit: int | None = None,
@@ -103,6 +105,7 @@ class PipelineRunner:
         sweep_skip_heading: bool = False,
         sweep_pulse_sec: int = 5,
         force_watermark: bool = False,
+        force_llm_reanalysis: bool = False,
         debug: bool = False,
         debug_prompt: bool = False,
     ):
@@ -111,6 +114,7 @@ class PipelineRunner:
         self.paths = self.config.get('paths', {})
         self.stages = self.config.get('pipeline', {}).get('stages', [])
         self.metadata_catalog = {}
+        self.album_filter = str(album).strip() if album else None
         master_path = self.paths.get('master_catalog')
         self.master_store: MasterStore | None = MasterStore(master_path) if master_path else None
         # Optional override for geocoding cache-only mode
@@ -124,8 +128,9 @@ class PipelineRunner:
         self.sweep_skip_heading = sweep_skip_heading
         self.sweep_pulse_sec = max(1, int(sweep_pulse_sec))
         self.force_watermark = force_watermark
+        self.force_llm_reanalysis = force_llm_reanalysis
         self.debug = debug
-        # LLM image analysis stage removed from active pipeline flow.
+        self.debug_prompt = debug_prompt
         
     def _load_config(self) -> Dict:
         """Load pipeline configuration"""
@@ -194,6 +199,28 @@ class PipelineRunner:
         except Exception as e:
             logWarn(f"⚠️  Failed to load geocode cache: {e}")
             return {}
+
+    def _save_geocode_cache(self, geocode_cache: Dict) -> bool:
+        """Persist geocode cache updates atomically."""
+        metadata_dir = Path(self.paths.get('metadata_dir', ''))
+        cache_path = metadata_dir / 'geocode_cache.json'
+        try:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp_path = cache_path.with_suffix('.tmp')
+            with open(tmp_path, 'w', encoding='utf-8') as f:
+                json.dump(geocode_cache, f, indent=2, ensure_ascii=False)
+            tmp_path.replace(cache_path)
+            return True
+        except Exception as exc:
+            logWarn(f"⚠️  Failed to save geocode cache: {exc}")
+            return False
+
+    def _build_photo_index(self, image_files: List[Path]) -> Dict[str, str]:
+        """Map photo file names to absolute image paths for fast geocode cache lookup."""
+        photo_index: Dict[str, str] = {}
+        for image_path in image_files:
+            photo_index.setdefault(image_path.name, str(image_path))
+        return photo_index
 
     def _state_short(self, state: str, country_code: str) -> str:
         """Abbreviate common provinces/states for compact watermark lines."""
@@ -629,9 +656,165 @@ class PipelineRunner:
         logInfo("ℹ️  Pre-LoRA watermarking compatibility stage retained but not used in current flow.")
 
     def run_llm_image_analysis_stage(self):
-        """Deprecated: LLM stage removed from active pipeline."""
-        logWarn("⏭️  llm_image_analysis stage has been removed from active pipeline flow.")
-        logWarn("   Watermark content now comes from POI + geolocation templates only.")
+        """Stage 5: Generate LLM-suggested watermark lines into geocode_cache.json."""
+        llm_cfg = self.config.get('llm_image_analysis', {}) or {}
+        if not llm_cfg.get('enabled', False):
+            logInfo("⏭️  llm_image_analysis disabled, skipping...")
+            return
+
+        input_path = Path(self.paths.get('raw_input'))
+        if not input_path.exists():
+            logWarn(f"⚠️  Raw input path not found: {input_path}")
+            return
+
+        image_files = find_images_in_directory(input_path)
+        if not image_files:
+            logWarn(f"⚠️  No images found in {input_path} - skipping llm_image_analysis")
+            return
+
+        photo_index = self._build_photo_index(image_files)
+
+        geocode_cache = self._load_geocode_cache()
+        if not geocode_cache:
+            logWarn("⚠️  geocode_cache.json is empty or missing; run metadata_extraction first")
+            return
+
+        model = str(llm_cfg.get('model') or 'gemma4:latest').strip() or 'gemma4:latest'
+        endpoint = str(llm_cfg.get('endpoint') or 'http://localhost:11434').strip()
+        timeout_seconds = int(llm_cfg.get('timeout_seconds', 45))
+        max_line1_words = int(llm_cfg.get('line1_max_words', 8))
+        max_line2_words = int(llm_cfg.get('line2_max_words', 14))
+        analyzer = LLMImageAnalyzer(
+            endpoint=endpoint,
+            model=model,
+            max_line1_words=max_line1_words,
+            max_line2_words=max_line2_words,
+        )
+
+        debug_output_path = None
+        if self.debug_prompt:
+            debug_output_path = str((Path(__file__).parent / 'logs' / 'llm_prompt_request.json').resolve())
+
+        processed = 0
+        skipped = 0
+        failed = 0
+        updated = 0
+        stage_start = time.perf_counter()
+        selected_count = 0
+
+        geocode_items = list(geocode_cache.items())
+        total_entries = len(geocode_items)
+
+        logInfo(f"🧠 Stage 5: LLM watermark suggestion pass with {model}")
+        logInfo(f"📦 geocode_cache entries: {total_entries}")
+
+        for idx, (cache_key, cached_geo) in enumerate(geocode_items, 1):
+            cached_geo = cached_geo or {}
+            photos = list(cached_geo.get('photos') or [])
+            representative_photo = photos[0] if photos else ''
+            representative_path = photo_index.get(representative_photo)
+
+            if self.sweep_path_contains:
+                haystack = ' '.join([cache_key, representative_photo, representative_path or ''])
+                if self.sweep_path_contains not in haystack:
+                    skipped += 1
+                    continue
+
+            if self.sweep_limit and selected_count >= self.sweep_limit:
+                break
+
+            if (
+                cached_geo.get('LLM_Watermark_Line1')
+                and cached_geo.get('LLM_Watermark_Line2')
+                and not self.force_llm_reanalysis
+            ):
+                skipped += 1
+                continue
+
+            lat = cached_geo.get('lat')
+            lon = cached_geo.get('lon')
+            if lat is None or lon is None:
+                skipped += 1
+                continue
+
+            gps = {
+                'lat': lat,
+                'lon': lon,
+                'altitude': cached_geo.get('altitude', 'unknown'),
+                'heading': cached_geo.get('heading', 'unknown'),
+                'cardinal': cached_geo.get('cardinal', ''),
+            }
+            location = {
+                'city': cached_geo.get('city', ''),
+                'state': cached_geo.get('state', ''),
+                'country': cached_geo.get('country', ''),
+                'display_name': cached_geo.get('display_name', ''),
+                'road': cached_geo.get('road', ''),
+                'formatted': cached_geo.get('formatted', 'Unknown Location'),
+                'poi_found': cached_geo.get('poi_found', False),
+                'osm_type': cached_geo.get('osm_type', ''),
+                'category': cached_geo.get('category', ''),
+                'type': cached_geo.get('type', ''),
+                'provider': cached_geo.get('provider', ''),
+            }
+            nearby_pois = list(cached_geo.get('nearby_pois') or [])
+            poi_search = cached_geo.get('poi_search') or {}
+
+            selected_count += 1
+            processed += 1
+            print(f"\n🧠 LLM Geo Entry: {representative_photo or cache_key} ({selected_count}/{min(total_entries, self.sweep_limit or total_entries)})")
+            print(f"   📍 Cache key: {cache_key}")
+            if representative_path:
+                print(f"   🖼️  Photo: {Path(representative_path).name}")
+            image_start = time.perf_counter()
+
+            result = analyzer.analyze_image(
+                image_path=representative_path,
+                cache_key=cache_key,
+                geo_entry=cached_geo,
+                nearby_pois=nearby_pois,
+                location=location,
+                gps=gps,
+                poi_search=poi_search,
+                photo_name=representative_photo,
+                timeout=timeout_seconds,
+                debug_output_path=debug_output_path,
+            )
+            result_source = 'vision_llm'
+            if not result:
+                result = analyzer.generate_fallback(
+                    location_formatted=location.get('formatted', 'Unknown Location'),
+                    nearby_pois=nearby_pois,
+                    poi_search=poi_search,
+                    geo_entry=cached_geo,
+                )
+                result_source = 'fallback'
+
+            if not result:
+                failed += 1
+                print("   ❌ No watermark line result")
+                continue
+
+            cached_geo['LLM_Watermark_Line1'] = result.get('LLM_Watermark_Line1', '')
+            cached_geo['LLM_Watermark_Line2'] = result.get('LLM_Watermark_Line2', '')
+            geocode_cache[cache_key] = cached_geo
+            if not self._save_geocode_cache(geocode_cache):
+                failed += 1
+                print("   ❌ Failed to save geocode_cache.json")
+                continue
+
+            updated += 1
+            elapsed = time.perf_counter() - image_start
+            print(f"   🏷️  LLM_Watermark_Line1: {cached_geo['LLM_Watermark_Line1'] or 'N/A'}")
+            print(f"   🏷️  LLM_Watermark_Line2: {cached_geo['LLM_Watermark_Line2'] or 'N/A'}")
+            print(f"   🤖 Source: {result_source} ({result.get('llm_model', model)})")
+            print(f"   ⏱️  Entry time: {elapsed:.2f}s")
+
+        stage_elapsed = time.perf_counter() - stage_start
+        logInfo(
+            f"✅ llm_image_analysis complete - updated={updated}, failed={failed}, skipped={skipped}"
+        )
+        logInfo(f"⏱️  Stage 5 total elapsed: {stage_elapsed:.2f}s")
     
     def run_lora_processing_stage(self):
         """Stage 6: Apply LoRA style filters"""
@@ -924,6 +1107,12 @@ class PipelineRunner:
                             f"      - {poi.get('name')} [{poi.get('type')}] "
                             f"({float(poi.get('distance_m') or 0):.0f}m {direction})"
                         )
+                elif watermark_result.get('fallback_context'):
+                    fallback_context = watermark_result['fallback_context']
+                    line1_debug.append(
+                        f"   🌐 Base context: {fallback_context.get('summary')} "
+                        f"[{fallback_context.get('type')}]"
+                    )
 
                 # Optional seed logging only (keep watermark lines clean).
                 seed_value = lora_generation_params.get('seed')
@@ -1072,6 +1261,9 @@ class PipelineRunner:
         bucket_prefix = s3_config.get('bucket_prefix', 'albums')
         aws_profile = s3_config.get('aws_profile', 'default')
         dry_run = s3_config.get('dry_run', False)
+        cloudfront_cfg = s3_config.get('cloudfront', {}) or {}
+        cloudfront_enabled = bool(cloudfront_cfg.get('enabled', False))
+        cloudfront_distribution_id = str(cloudfront_cfg.get('distribution_id', '')).strip()
         
         if not source_folder.exists():
             logError(f"❌ Source folder not found: {source_folder}")
@@ -1080,6 +1272,8 @@ class PipelineRunner:
         logInfo(f"📁 Source: {source_folder}")
         logInfo(f"☁️  Bucket: s3://{bucket_name}/{bucket_prefix}/")
         logInfo(f"🔑 AWS Profile: {aws_profile}")
+        if self.album_filter:
+            logInfo(f"🎯 Album filter: {self.album_filter}")
         
         if dry_run:
             logInfo("🏃 DRY RUN MODE - No files will be uploaded")
@@ -1110,11 +1304,19 @@ class PipelineRunner:
             total_files = 0
             uploaded_files = 0
             skipped_files = 0
+
+            if self.album_filter:
+                selected_album = source_folder / self.album_filter
+                if not selected_album.exists() or not selected_album.is_dir():
+                    logError(f"❌ Album folder not found under source folder: {self.album_filter}")
+                    logError(f"   Expected path: {selected_album}")
+                    return
+                album_dirs = [selected_album]
+            else:
+                album_dirs = [p for p in source_folder.iterdir() if p.is_dir()]
             
             # Walk through album/style folders
-            for album_dir in source_folder.iterdir():
-                if not album_dir.is_dir():
-                    continue
+            for album_dir in album_dirs:
                 
                 album_name = album_dir.name
                 logInfo(f"\n📂 Processing album: {album_name}")
@@ -1191,6 +1393,64 @@ class PipelineRunner:
             logInfo(f"\n✅ S3 deployment complete")
             logInfo(f"📊 Total: {total_files} files | Uploaded: {uploaded_files} | Skipped: {skipped_files}")
             logInfo(f"🌐 View at: https://{bucket_name}.s3.amazonaws.com/{bucket_prefix}/")
+
+            if dry_run:
+                logInfo("⏭️  CloudFront invalidation skipped (dry_run=true)")
+            elif uploaded_files == 0:
+                logInfo("⏭️  CloudFront invalidation skipped (no uploaded files)")
+            elif not cloudfront_enabled:
+                logInfo("⏭️  CloudFront invalidation skipped (s3_deployment.cloudfront.enabled=false)")
+            elif not cloudfront_distribution_id:
+                logWarn("⚠️  CloudFront invalidation requested but distribution_id is not set")
+            else:
+                invalidation_paths = cloudfront_cfg.get('paths')
+                if not invalidation_paths:
+                    if self.album_filter:
+                        invalidation_paths = [f"/{bucket_prefix}/{self.album_filter}/*"]
+                    else:
+                        invalidation_paths = [f"/{bucket_prefix}/*"]
+                if isinstance(invalidation_paths, str):
+                    invalidation_paths = [invalidation_paths]
+                invalidation_paths = [p if str(p).startswith('/') else f"/{p}" for p in invalidation_paths]
+
+                caller_reference = str(
+                    cloudfront_cfg.get('caller_reference') or f"pipeline-{int(time.time() * 1000)}"
+                )
+                wait_for_completion = bool(cloudfront_cfg.get('wait_for_completion', False))
+
+                try:
+                    cloudfront_client = session.client('cloudfront')
+                    invalidation_resp = cloudfront_client.create_invalidation(
+                        DistributionId=cloudfront_distribution_id,
+                        InvalidationBatch={
+                            'Paths': {
+                                'Quantity': len(invalidation_paths),
+                                'Items': invalidation_paths,
+                            },
+                            'CallerReference': caller_reference,
+                        },
+                    )
+
+                    invalidation = invalidation_resp.get('Invalidation', {})
+                    invalidation_id = invalidation.get('Id')
+                    invalidation_status = invalidation.get('Status')
+                    logInfo("✅ CloudFront invalidation created")
+                    logInfo(f"   Distribution: {cloudfront_distribution_id}")
+                    logInfo(f"   Invalidation ID: {invalidation_id}")
+                    logInfo(f"   Status: {invalidation_status}")
+                    logInfo(f"   Paths: {', '.join(invalidation_paths)}")
+
+                    if wait_for_completion and invalidation_id:
+                        logInfo("⏳ Waiting for CloudFront invalidation to complete...")
+                        waiter = cloudfront_client.get_waiter('invalidation_completed')
+                        waiter.wait(
+                            DistributionId=cloudfront_distribution_id,
+                            Id=invalidation_id,
+                        )
+                        logInfo("✅ CloudFront invalidation completed")
+
+                except ClientError as e:
+                    logError(f"❌ CloudFront invalidation failed: {e}")
             
         except ImportError:
             logError("❌ boto3 not installed. Install with: pip install boto3")
@@ -1227,6 +1487,7 @@ class PipelineRunner:
             'export': self.run_export_stage,
             'cleanup': lambda: self.run_cleanup_stage(stages, force_clean=force_clean),
             'metadata_extraction': self.run_metadata_extraction_stage,
+            'llm_image_analysis': self.run_llm_image_analysis_stage,
             'preprocessing': self.run_preprocessing_stage,
             'watermarking': self.run_watermarking_stage,
             'lora_processing': self.run_lora_processing_stage,
@@ -1258,6 +1519,7 @@ class PipelineRunner:
             'export',
             'cleanup',
             'metadata_extraction',
+            'llm_image_analysis',
             'preprocessing',
             'watermarking',
             'lora_processing',
@@ -1285,6 +1547,7 @@ class PipelineRunner:
             stage_descriptions = {
                 'export': '   Export photos from Apple Photos',
                 'metadata_extraction': '   Extract EXIF metadata and GPS coordinates from exported images',
+                'llm_image_analysis': '   Generate terse LLM line-1 candidates from image content',
                 'preprocessing': '   Resize and optimize images for LoRA processing',
                 'watermarking': '   Run compatibility pre-LoRA watermark stage',
                 'lora_processing': '   Apply artistic style filters with FLUX LoRA models',
@@ -1492,6 +1755,7 @@ if __name__ == "__main__":
         "  cleanup                Remove existing pipeline output folders\n"
         "  export                 Export photos from Apple Photos\n"
         "  metadata_extraction    Extract EXIF/GPS + geocode + POI cache\n"
+        "  llm_image_analysis     Generate terse LINE 1 candidates with gemma4\n"
         "  preprocessing          Resize and optimize source images\n"
         "  watermarking           Pre-LoRA watermark stage (compatibility)\n"
         "  lora_processing        Generate style variants with LoRA\n"
@@ -1516,9 +1780,11 @@ if __name__ == "__main__":
     parser.add_argument("--sweep-skip-heading", action="store_true", help="Skip EXIF heading extraction during sweep")
     parser.add_argument("--sweep-pulse-sec", type=int, default=5, help="Heartbeat interval in seconds for geocode sweep progress")
     parser.add_argument("--force-watermark", action="store_true", help="Force post-LoRA watermarking to re-process even if already watermarked")
+    parser.add_argument("--force-llm-reanalysis", action="store_true", help="Force llm_image_analysis to overwrite existing candidate data")
+    parser.add_argument("--album", help="Limit run to a specific album folder name (currently used by s3_deployment)")
     parser.add_argument("--verbose", action="store_true", help="Enable verbose output to terminal")
     parser.add_argument("--debug", action="store_true", help="Enable debug mode - saves LLM prompts to llm_prompt_request.json")
-    parser.add_argument("--debug-prompt", action="store_true", help="Save populated Stage 5 & 6 prompts to logs/ folder with image names")
+    parser.add_argument("--debug-prompt", action="store_true", help="Save populated LLM prompts to logs/ folder with image names")
     parser.add_argument("--force-clean", action="store_true", help="Force cleanup stage to delete folders even without export stage")
     
     args = parser.parse_args()
@@ -1648,6 +1914,7 @@ if __name__ == "__main__":
     
     runner = PipelineRunner(
         args.config,
+        album=args.album,
         cache_only_geocode=args.cache_only_geocode,
         sweep_path_contains=args.sweep_path_contains,
         sweep_limit=args.sweep_limit,
@@ -1656,6 +1923,7 @@ if __name__ == "__main__":
         sweep_skip_heading=args.sweep_skip_heading,
         sweep_pulse_sec=args.sweep_pulse_sec,
         force_watermark=args.force_watermark,
+        force_llm_reanalysis=args.force_llm_reanalysis,
         debug=args.debug,
         debug_prompt=args.debug_prompt,
     )

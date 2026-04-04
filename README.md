@@ -45,7 +45,7 @@ python3 main.py
 
 ```bash
 # Full pipeline automation
-caffeinate -i python3 pipeline.py --yes
+./run_Pipeline.sh --yes
 ```
 
 ---
@@ -64,33 +64,33 @@ The project is CLI-only. Use the setup runner once, then execute pipeline stages
 ./run_SetupEnv.sh --profile performance/macmini-fast-20260326.txt
 ```
 
-This configures Python, installs requirements, writes `.env`, and updates config defaults.
+This configures Python, installs requirements into the pinned interpreter, writes `.env`, and updates config defaults.
 
 ### 2. Run Complete Pipeline
 
 **Full pipeline (all stages):**
 
 ```bash
-caffeinate -i python3 pipeline.py --yes
+./run_Pipeline.sh --yes
 ```
 
 ### 3. Run Individual Stages
 
 ```bash
 # Export from Apple Photos
-python3 pipeline.py --stages export
+./run_Pipeline.sh --stages export
 
 # Extract metadata and analyze with LLM
-python3 pipeline.py --stages metadata_extraction llm_image_analysis
+./run_Pipeline.sh --stages metadata_extraction llm_image_analysis
 
 # Process with LoRA styles
-python3 pipeline.py --stages lora_processing
+./run_Pipeline.sh --stages lora_processing
 
 # Add watermarks
-python3 pipeline.py --stages post_lora_watermarking
+./run_Pipeline.sh --stages post_lora_watermarking
 
 # Deploy to S3
-python3 pipeline.py --stages s3_deployment
+./run_Pipeline.sh --stages s3_deployment
 ```
 
 ### 4. Graceful Shutdown & Resume
@@ -105,7 +105,7 @@ touch /tmp/skicyclerun_stop
 **Resume processing:**
 
 ```bash
-caffeinate -i python3 pipeline.py --stages lora_processing
+./run_Pipeline.sh --stages lora_processing
 # Automatically skips already-processed images
 ```
 
@@ -431,6 +431,7 @@ pip install -r requirements-ui.txt
   ```
 
 - **AWS CLI** - Configure for S3 deployment
+
   ```bash
   aws configure
   # Enter: AWS Access Key ID, Secret Access Key, Region (us-west-2)

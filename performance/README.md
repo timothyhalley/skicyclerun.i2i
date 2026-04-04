@@ -18,7 +18,7 @@ in one step — no shell preamble or manual env var management required.
 ./run_SetupEnv.sh --profile performance/macmini-fast-20260326.txt \
     --lib-root  /Volumes/MySSD/skicyclerun.i2i \
     --hf-cache  /Volumes/MySSD/huggingface
-```
+```bash
 
 `scripts/env_setup.py` performs all of these steps automatically:
 
@@ -35,12 +35,15 @@ After running once, every new shell can go straight to:
 ./run_Pipeline.sh --stages lora_processing
 ```
 
+Use `./run_Pipeline.sh` instead of calling `python3 pipeline.py` directly so the
+project runs with the interpreter pinned by `.python-version`.
+
 ## Profile file format
 
 Profiles are plain pip requirement files with structured `# key: value`
 comment lines at the top for machine metadata:
 
-```
+```text
 # python_version: 3.13.12
 # lib_root: /Volumes/MySSD/skicyclerun.i2i
 # huggingface_cache: /Volumes/MySSD/huggingface

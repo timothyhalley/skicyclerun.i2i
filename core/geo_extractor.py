@@ -8,7 +8,7 @@ import time
 from datetime import datetime
 from utils.time_utils import utc_now_iso_z, infer_utc_from_local_naive
 from pathlib import Path
-from typing import Optional, Dict, Tuple, List
+from typing import Any, Optional, Dict, Tuple, List
 import requests
 from PIL import Image
 from PIL.ExifTags import TAGS, GPSTAGS
@@ -96,6 +96,7 @@ class GeoExtractor:
         self.poi_max_distance_m = int(poi_cfg.get('max_distance_m', self.poi_radius_m))
         self.poi_heading_weight = float(poi_cfg.get('heading_weight', 0.7))
         self.poi_distance_weight = float(poi_cfg.get('distance_weight', 0.3))
+        self.last_poi_fallback_context: Optional[Dict[str, Any]] = None
 
     def _get_google_places_api_key(self) -> Optional[str]:
         """Load Google Places API key from config or environment."""
@@ -636,9 +637,55 @@ class GeoExtractor:
                 return query_category
         return None
 
-    def fetch_pois(self, lat: float, lon: float, heading_deg: Optional[float] = None) -> List[Dict]:
+    def _build_poi_fallback_context(self, location_info: Optional[Dict]) -> Optional[Dict[str, Any]]:
+        """Build a concise reverse-geocode fallback when nearby POIs are unavailable."""
+        if not location_info:
+            return None
+
+        address = location_info.get('address', {}) if 'address' in location_info else location_info
+        formatted = (location_info.get('formatted') or self.format_location(location_info) or '').strip()
+        anchor = (
+            location_info.get('name')
+            or location_info.get('road')
+            or address.get('road')
+            or address.get('pedestrian')
+            or address.get('footway')
+            or address.get('neighbourhood')
+            or address.get('suburb')
+            or address.get('quarter')
+        )
+        anchor = (anchor or '').strip()
+        display_name = (location_info.get('display_name') or '').strip()
+        place_type = str(location_info.get('type') or location_info.get('category') or 'location').strip()
+        provider = str(location_info.get('provider') or 'reverse_geocode').strip()
+
+        if anchor and formatted and anchor.lower() not in formatted.lower():
+            summary = f"{anchor}, {formatted}"
+        else:
+            summary = anchor or formatted or display_name
+
+        if not summary:
+            return None
+
+        return {
+            'summary': summary,
+            'anchor': anchor or None,
+            'formatted': formatted or None,
+            'display_name': display_name or None,
+            'type': place_type,
+            'provider': provider,
+        }
+
+    def fetch_pois(
+        self,
+        lat: float,
+        lon: float,
+        heading_deg: Optional[float] = None,
+        location_info: Optional[Dict] = None,
+    ) -> List[Dict]:
         """Fetch nearby POIs from Overpass using progressive radius strategy."""
         self.last_poi_fetch_status = 'not_attempted'
+        self.last_poi_fallback_context = None
         if not self.poi_enabled:
             self.last_poi_fetch_status = 'disabled'
             return []
@@ -652,13 +699,26 @@ class GeoExtractor:
 
         try:
             pois: List[Dict] = []
+            raw_context_preview: List[str] = []
             for radius_m in self.poi_progressive_radii:
-                primary = get_nearby_interesting_pois(lat, lon, radius_m=radius_m)
+                print(f"   • Radius {radius_m}m")
+                primary = get_nearby_interesting_pois(lat, lon, radius_m=radius_m, log_prefix='      ')
                 if primary:
                     merged = primary
                 else:
-                    natural = get_natural_context_pois(lat, lon, radius_m=max(radius_m, 250))
+                    natural = get_natural_context_pois(
+                        lat,
+                        lon,
+                        radius_m=max(radius_m, 250),
+                        log_prefix='      ',
+                    )
                     merged = _merge_poi_lists(primary, natural)
+
+                raw_context_preview = [
+                    poi.get('name', 'Unnamed')
+                    for poi in merged[: min(3, self.poi_max_results)]
+                    if poi.get('name')
+                ]
 
                 # Filter to allowed categories when configured.
                 if self.poi_allowed_categories:
@@ -684,16 +744,39 @@ class GeoExtractor:
                 normalized.sort(key=lambda x: x['distance_m'])
                 pois = normalized[:self.poi_max_results]
 
-                print(f"   --> POI @ {radius_m}m")
                 if pois:
-                    print(f"      {[p.get('name') for p in pois]}")
-                    print(f"      ✅ Relevant local POIs found at {radius_m}m; skipping larger radii")
+                    for poi in pois:
+                        poi_type = poi.get('type') or 'unknown'
+                        distance_m = float(poi.get('distance_m') or 0)
+                        bearing = poi.get('bearing_cardinal') or ''
+                        bearing_suffix = f" {bearing}" if bearing else ''
+                        print(
+                            f"      • {poi.get('name')} [{poi_type}] "
+                            f"({distance_m:.0f}m{bearing_suffix})"
+                        )
+                    print(f"      ✅ Using {len(pois)} POIs from {radius_m}m radius")
                     break
-                print("      []")
-                print(f"      ⏭️  No relevant POIs at {radius_m}m; trying next radius")
+
+                if merged:
+                    print(
+                        f"      · {len(merged)} named OSM candidate(s) found, "
+                        "but none matched the watermark filters"
+                    )
+                    print(f"      · Raw context: {', '.join(raw_context_preview)}")
+                else:
+                    print("      · No named OSM context found at this radius")
+                print(f"      ⏭️  Expanding search beyond {radius_m}m")
 
             self.last_poi_request_time = time.time()
             self.last_poi_fetch_status = 'success' if pois else 'no_pois_found'
+            if not pois:
+                self.last_poi_fallback_context = self._build_poi_fallback_context(location_info)
+                if self.last_poi_fallback_context:
+                    print(
+                        "      • Base location: "
+                        f"{self.last_poi_fallback_context['summary']} "
+                        f"[{self.last_poi_fallback_context['type']}]"
+                    )
             print(f"   ✅ Overpass returned {len(pois)} POIs")
             return pois
         except requests.exceptions.Timeout:
@@ -1059,10 +1142,15 @@ class GeoExtractor:
             if self.poi_enabled and self.cache_enabled:
                 cached_data = self.cache.get(cache_key, {})
                 if self._should_refresh_cached_pois(cached_data):
-                    nearby_pois = self.fetch_pois(lat, lon, heading_deg=gps_data.get('heading'))
+                    nearby_pois = self.fetch_pois(
+                        lat,
+                        lon,
+                        heading_deg=gps_data.get('heading'),
+                        location_info=location_info,
+                    )
                     poi_status = self.last_poi_fetch_status or 'legacy_unknown'
                     cached_data['nearby_pois'] = nearby_pois
-                    cached_data['poi_search'] = {
+                    poi_search = {
                         'attempted': True,
                         'search_radius_m': self.poi_radius_m,
                         'search_radii_m': self.poi_progressive_radii,
@@ -1073,6 +1161,9 @@ class GeoExtractor:
                         'result_count': len(nearby_pois),
                         'error': None if nearby_pois else poi_status
                     }
+                    if self.last_poi_fallback_context:
+                        poi_search['fallback_context'] = self.last_poi_fallback_context
+                    cached_data['poi_search'] = poi_search
                     self.cache[cache_key] = cached_data
                     self._save_cache()
         

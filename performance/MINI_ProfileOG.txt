@@ -62,6 +62,7 @@ timezonefinder==8.2.1
 
 # HTTP requests
 requests==2.32.3
+boto3==1.39.11
 
 # System monitoring and utilities
 psutil==7.1.0

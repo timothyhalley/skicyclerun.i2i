@@ -328,6 +328,10 @@ def _build_reverse_info_from_cached_context(
     """Build a reverse-info shaped object from metadata/cache fields."""
     location = location or {}
     cached_geo = cached_geo or {}
+    poi_search = cached_geo.get("poi_search") or {}
+    fallback_context = (
+        poi_search.get("fallback_context") if isinstance(poi_search, dict) else {}
+    ) or {}
 
     city = (cached_geo.get("city") or location.get("city") or "").strip()
     state = (cached_geo.get("state") or location.get("state") or "").strip()
@@ -335,7 +339,7 @@ def _build_reverse_info_from_cached_context(
     country_code = (
         (cached_geo.get("country_code") or location.get("country_code") or "").strip().lower()
     )
-    road = (cached_geo.get("road") or "").strip()
+    road = (cached_geo.get("road") or fallback_context.get("anchor") or "").strip()
     house_number = (cached_geo.get("house_number") or "").strip()
 
     address: Dict[str, Any] = {}
@@ -352,9 +356,16 @@ def _build_reverse_info_from_cached_context(
     if house_number:
         address["house_number"] = house_number
 
-    name = (cached_geo.get("name") or location.get("name") or "").strip()
+    name = (
+        cached_geo.get("name")
+        or location.get("name")
+        or fallback_context.get("anchor")
+        or ""
+    ).strip()
     display_name = (
         cached_geo.get("display_name")
+        or fallback_context.get("display_name")
+        or fallback_context.get("formatted")
         or location.get("formatted")
         or name
         or "Unknown location"
@@ -362,6 +373,7 @@ def _build_reverse_info_from_cached_context(
     approximation = (
         name
         or road
+        or (fallback_context.get("summary") or "").strip()
         or city
         or str(display_name).split(",")[0].strip()
         or "Unknown location"
@@ -371,8 +383,8 @@ def _build_reverse_info_from_cached_context(
         "name": name,
         "display_name": display_name,
         "approximation": approximation,
-        "category": cached_geo.get("category", ""),
-        "type": cached_geo.get("type", ""),
+        "category": cached_geo.get("category") or fallback_context.get("type") or "",
+        "type": cached_geo.get("type") or fallback_context.get("type") or "",
         "address": address,
         "namedetails": cached_geo.get("namedetails") or {},
         "extratags": cached_geo.get("extratags") or {},
@@ -388,6 +400,10 @@ def build_watermark_from_cached_context(
 ) -> Dict[str, Any]:
     """Build line1/line2 from cached geocode context without Overpass/Nominatim calls."""
     reverse_info = _build_reverse_info_from_cached_context(location=location, cached_geo=cached_geo)
+    poi_search = (cached_geo or {}).get("poi_search") or {}
+    fallback_context = (
+        poi_search.get("fallback_context") if isinstance(poi_search, dict) else {}
+    ) or {}
 
     nearby_pois_raw = list((cached_geo or {}).get("nearby_pois") or [])
     nearby_pois: List[Dict[str, Any]] = []
@@ -421,6 +437,21 @@ def build_watermark_from_cached_context(
         nearby_pois = []
 
     here_place = derive_here_place(reverse_info, nearby_pois)
+    if not here_place and not nearby_pois and fallback_context:
+        fallback_name = (
+            fallback_context.get("anchor")
+            or fallback_context.get("summary")
+            or reverse_info.get("approximation")
+            or ""
+        ).strip()
+        if fallback_name:
+            here_place = {
+                "name": fallback_name,
+                "type": (fallback_context.get("type") or reverse_info.get("type") or "location").strip(),
+                "distance_m": 0.0,
+                "source": "fallback_context",
+            }
+
     line1, line2 = build_two_line_watermark(
         reverse_info,
         here_place,
@@ -445,6 +476,7 @@ def build_watermark_from_cached_context(
         "known_hint": known_hint,
         "here_place": here_place,
         "nearby_pois": nearby_pois,
+        "fallback_context": fallback_context,
         "line1": line1,
         "line2": line2,
         "watermark": f"{line1}\n{line2}",

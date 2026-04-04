@@ -90,7 +90,7 @@ def is_listing_noise(name: str) -> bool:
 # ---------------------------------------------------------------------------
 
 def get_nearby_interesting_pois(
-    lat: float, lon: float, radius_m: int = 50
+    lat: float, lon: float, radius_m: int = 50, log_prefix: str = ""
 ) -> List[Dict[str, Any]]:
     """Return named POIs within *radius_m* metres, filtered for watermark usefulness."""
     query = f"""
@@ -102,7 +102,7 @@ def get_nearby_interesting_pois(
 );
 out center;
 """
-    features = extract_features(query_osm(query), lat, lon)
+    features = extract_features(query_osm(query, log_prefix=log_prefix), lat, lon)
 
     filtered = []
     for feature in features:
@@ -120,7 +120,7 @@ out center;
 
 
 def get_natural_context_pois(
-    lat: float, lon: float, radius_m: int = 250
+    lat: float, lon: float, radius_m: int = 250, log_prefix: str = ""
 ) -> List[Dict[str, Any]]:
     """Fallback query for natural context when the strict nearby query returns nothing."""
     query = f"""
@@ -140,7 +140,7 @@ def get_natural_context_pois(
 );
 out center;
 """
-    features = extract_features(query_osm(query), lat, lon)
+    features = extract_features(query_osm(query, log_prefix=log_prefix), lat, lon)
 
     filtered = []
     seen_names: set = set()

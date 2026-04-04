@@ -64,7 +64,9 @@ class OverpassRateLimiter:
 _limiter = OverpassRateLimiter()
 
 
-def query_osm(query: str, max_retries: int = 6) -> List[Dict[str, Any]]:
+def query_osm(
+    query: str, max_retries: int = 6, log_prefix: str = ""
+) -> List[Dict[str, Any]]:
     """Execute an Overpass QL query and return the ``elements`` list."""
     for attempt in range(max_retries):
         _limiter.wait_if_needed()
@@ -75,7 +77,7 @@ def query_osm(query: str, max_retries: int = 6) -> List[Dict[str, Any]]:
                 wait = _limiter.get_backoff_wait(attempt)
                 _limiter.record_failure()
                 print(
-                    f"[Overpass] HTTP {response.status_code} from {server} "
+                    f"{log_prefix}[Overpass] HTTP {response.status_code} from {server} "
                     f"(attempt {attempt + 1}/{max_retries}). Back off {wait:.1f}s…"
                 )
                 time.sleep(wait)
@@ -86,15 +88,21 @@ def query_osm(query: str, max_retries: int = 6) -> List[Dict[str, Any]]:
         except requests.exceptions.Timeout:
             wait = _limiter.get_backoff_wait(attempt)
             _limiter.record_failure()
-            print(f"[Overpass] Timeout on {server} (attempt {attempt + 1}/{max_retries}). Back off {wait:.1f}s…")
+            print(
+                f"{log_prefix}[Overpass] Timeout on {server} "
+                f"(attempt {attempt + 1}/{max_retries}). Back off {wait:.1f}s…"
+            )
             time.sleep(wait)
         except requests.exceptions.RequestException as exc:
             wait = _limiter.get_backoff_wait(attempt)
             _limiter.record_failure()
-            print(f"[Overpass] Error on {server} (attempt {attempt + 1}/{max_retries}): {exc}. Back off {wait:.1f}s…")
+            print(
+                f"{log_prefix}[Overpass] Error on {server} "
+                f"(attempt {attempt + 1}/{max_retries}): {exc}. Back off {wait:.1f}s…"
+            )
             time.sleep(wait)
 
-    print("[Overpass] FAILED after all retries.")
+    print(f"{log_prefix}[Overpass] FAILED after all retries.")
     return []
 
 

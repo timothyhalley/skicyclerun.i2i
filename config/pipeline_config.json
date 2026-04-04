@@ -217,14 +217,7 @@
     "batch_mode": true,
     "preserve_metadata": true,
     "_loras_to_process_comment": "Special entries: 'NoLoRA' copies scaled images without style transfer (pass-through mode). Include as first entry to generate unmodified baseline images alongside stylized versions.",
-    "loras_to_process": [
-      "NoLoRA",
-      "PencilDrawing",
-      "FractalGeometry",
-      "Afremov",
-      "Gorillaz",
-      "Origami"
-    ],
+    "loras_to_process": ["Afremov"],
     "_Available_loras": [
       "PencilDrawing",
       "FractalGeometry",
@@ -253,8 +246,13 @@
     "negative_prompt": ""
   },
   "llm_image_analysis": {
-    "enabled": false,
-    "_comment": "Deprecated. LLM analysis removed from active pipeline; preserved for reference only."
+    "enabled": true,
+    "model": "gemma4:latest",
+    "endpoint": "http://localhost:11434",
+    "timeout_seconds": 45,
+    "line1_max_words": 8,
+    "line2_max_words": 14,
+    "_comment": "Optional stage. Generates LLM_Watermark_Line1 and LLM_Watermark_Line2 for each geocode_cache entry."
   },
   "s3_deployment": {
     "enabled": true,
@@ -266,7 +264,13 @@
     "content_type": "image/webp",
     "cache_control": "max-age=31536000, public",
     "storage_class": "STANDARD",
-    "dry_run": false
+    "dry_run": false,
+    "cloudfront": {
+      "enabled": true,
+      "distribution_id": "E1GQ61X0LT69AR",
+      "paths": [],
+      "wait_for_completion": false
+    }
   },
   "logging": {
     "level": "INFO",
@@ -276,9 +280,9 @@
   },
   "python_environment": {
     "python_version": "3.13.12",
-    "profile": "performance/MBP_TestProfile2.txt",
+    "profile": "performance/MINI_ProfileOG.txt",
     "lib_root": "/Volumes/MySSD/skicyclerun.i2i",
     "huggingface_cache": "/Volumes/MySSD/huggingface",
-    "last_setup": "2026-03-28T03:15:26Z"
+    "last_setup": "2026-04-02T20:34:40Z"
   }
 }

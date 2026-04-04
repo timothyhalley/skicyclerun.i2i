@@ -106,6 +106,54 @@ def _get_pyenv_global_version() -> str:
     return result.stdout.strip() or "(unknown)"
 
 
+def _get_pyenv_python_executable() -> str | None:
+    """Return the active pyenv Python executable for the current project."""
+    if not shutil.which("pyenv"):
+        return None
+
+    for candidate in ("python3", "python"):
+        result = _run(["pyenv", "which", candidate], capture=True, check=False)
+        if result.returncode == 0:
+            resolved = result.stdout.strip()
+            if resolved:
+                return resolved
+    return None
+
+
+def _normalize_executable(path_str: str | None) -> str:
+    if not path_str:
+        return ""
+    try:
+        return str(Path(path_str).resolve())
+    except OSError:
+        return path_str
+
+
+def maybe_reexec_with_pyenv_python(*, skip_pyenv: bool, reexeced: bool) -> None:
+    """Re-enter the setup script under the pinned pyenv interpreter if needed."""
+    if skip_pyenv or reexeced:
+        return
+
+    target_python = _get_pyenv_python_executable()
+    if not target_python:
+        return
+
+    current_python = _normalize_executable(sys.executable)
+    target_python = _normalize_executable(target_python)
+    if current_python == target_python:
+        return
+
+    step("Switching setup into the pinned pyenv interpreter")
+    info(f"Current interpreter: {current_python}")
+    info(f"Pinned interpreter:  {target_python}")
+
+    reexec_args = [target_python, str(Path(__file__).resolve()), *sys.argv[1:]]
+    if "--skip-snapshot" not in sys.argv[1:]:
+        reexec_args.append("--skip-snapshot")
+    reexec_args.append("--reexeced")
+    os.execv(target_python, reexec_args)
+
+
 def write_prechange_snapshot(profile_name: str) -> None:
     """Persist rollback-friendly snapshot before env setup mutates state."""
     step("Saving pre-change environment snapshot")
@@ -568,6 +616,7 @@ def main() -> None:
         help="Skip saving pre-change snapshot in performance/current-<machine>-<date>.txt")
     parser.add_argument("--capture-only", "--capture_only", "--capture", action="store_true",
         help="Capture current environment snapshot and planned changes only; do not modify files or install packages")
+    parser.add_argument("--reexeced", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
 
     banner("🚀  SkiCycleRun Environment Setup")
@@ -627,10 +676,12 @@ def main() -> None:
     print(f"  🧠 huggingface_cache: {hf_cache}")
 
     # 3 ── Save rollback snapshot before mutating setup ───────────────────────
-    if not args.skip_snapshot:
+    if not args.skip_snapshot and not args.reexeced:
         write_prechange_snapshot(profile_name)
-    else:
+    elif args.skip_snapshot:
         info("--skip-snapshot: pre-change snapshot disabled")
+    else:
+        info("Snapshot already captured before interpreter handoff")
 
     if packages:
         print_change_summary(packages, profile_name)
@@ -659,6 +710,8 @@ def main() -> None:
         set_pyenv_version(python_version)
     else:
         info(f"--skip-pyenv: staying on Python {sys.version.split()[0]}")
+
+    maybe_reexec_with_pyenv_python(skip_pyenv=args.skip_pyenv, reexeced=args.reexeced)
 
     # 5 ── requirements.txt ────────────────────────────────────────────────────
     build_requirements(packages, profile_name)
