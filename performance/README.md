@@ -7,7 +7,7 @@ in one step — no shell preamble or manual env var management required.
 
 ## Applying a profile
 
-```bash
+````bash
 # Mac mini (fast baseline)
 ./run_SetupEnv.sh --profile performance/macmini-fast-20260326.txt
 
@@ -33,7 +33,7 @@ After running once, every new shell can go straight to:
 
 ```bash
 ./run_Pipeline.sh --stages lora_processing
-```
+````
 
 Use `./run_Pipeline.sh` instead of calling `python3 pipeline.py` directly so the
 project runs with the interpreter pinned by `.python-version`.
