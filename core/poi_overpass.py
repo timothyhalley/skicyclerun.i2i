@@ -63,6 +63,27 @@ class OverpassRateLimiter:
 # Module-level singleton shared across all callers in a process.
 _limiter = OverpassRateLimiter()
 
+_stats: Dict[str, int] = {
+    "requests_attempted": 0,
+    "requests_succeeded": 0,
+    "http_errors": 0,
+    "timeouts": 0,
+    "request_exceptions": 0,
+    "retry_waits": 0,
+    "queries_failed": 0,
+}
+
+
+def reset_overpass_stats() -> None:
+    """Reset module-level Overpass request counters."""
+    for key in list(_stats.keys()):
+        _stats[key] = 0
+
+
+def get_overpass_stats() -> Dict[str, int]:
+    """Return a copy of current Overpass request counters."""
+    return dict(_stats)
+
 
 def query_osm(
     query: str, max_retries: int = 6, log_prefix: str = ""
@@ -71,11 +92,14 @@ def query_osm(
     for attempt in range(max_retries):
         _limiter.wait_if_needed()
         server = random.choice(OVERPASS_SERVERS)
+        _stats["requests_attempted"] += 1
         try:
             response = requests.post(server, data={"data": query}, timeout=60)
             if response.status_code in (429, 502, 503, 504):
                 wait = _limiter.get_backoff_wait(attempt)
                 _limiter.record_failure()
+                _stats["http_errors"] += 1
+                _stats["retry_waits"] += 1
                 print(
                     f"{log_prefix}[Overpass] HTTP {response.status_code} from {server} "
                     f"(attempt {attempt + 1}/{max_retries}). Back off {wait:.1f}s…"
@@ -84,10 +108,13 @@ def query_osm(
                 continue
             response.raise_for_status()
             _limiter.record_success()
+            _stats["requests_succeeded"] += 1
             return response.json().get("elements", [])
         except requests.exceptions.Timeout:
             wait = _limiter.get_backoff_wait(attempt)
             _limiter.record_failure()
+            _stats["timeouts"] += 1
+            _stats["retry_waits"] += 1
             print(
                 f"{log_prefix}[Overpass] Timeout on {server} "
                 f"(attempt {attempt + 1}/{max_retries}). Back off {wait:.1f}s…"
@@ -96,6 +123,8 @@ def query_osm(
         except requests.exceptions.RequestException as exc:
             wait = _limiter.get_backoff_wait(attempt)
             _limiter.record_failure()
+            _stats["request_exceptions"] += 1
+            _stats["retry_waits"] += 1
             print(
                 f"{log_prefix}[Overpass] Error on {server} "
                 f"(attempt {attempt + 1}/{max_retries}): {exc}. Back off {wait:.1f}s…"
@@ -103,6 +132,7 @@ def query_osm(
             time.sleep(wait)
 
     print(f"{log_prefix}[Overpass] FAILED after all retries.")
+    _stats["queries_failed"] += 1
     return []
 
 

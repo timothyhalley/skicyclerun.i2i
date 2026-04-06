@@ -5,6 +5,7 @@ Extracts GPS coordinates from EXIF and reverse geocodes to human-readable locati
 import json
 import os
 import time
+from threading import Lock
 from datetime import datetime
 from utils.time_utils import utc_now_iso_z, infer_utc_from_local_naive
 from pathlib import Path
@@ -13,36 +14,119 @@ import requests
 from PIL import Image
 from PIL.ExifTags import TAGS, GPSTAGS
 from .poi_osm_queries import get_nearby_interesting_pois, get_natural_context_pois, _merge_poi_lists
+from .poi_overpass import get_overpass_stats, reset_overpass_stats
 
 class GeoExtractor:
     def __init__(self, config: Dict):
         self.config = config
-        self.geocoding_config = config.get('metadata_extraction', {}).get('geocoding', {})
-        self.cache_enabled = self.geocoding_config.get('cache_enabled', True)
-        self.cache_file = self.geocoding_config.get('cache_file', 'geocode_cache.json')
-        self.cache_only = self.geocoding_config.get('cache_only', False)
-        self.rate_limit = self.geocoding_config.get('rate_limit_seconds', 1.0)
-        self.user_agent = self.geocoding_config.get('user_agent', 'SkiCycleRun/1.0')
+        self._load_env_file_once()
+        metadata_cfg = config.get('metadata_extraction', {})
+        providers_cfg = metadata_cfg.get('providers', {}) if isinstance(metadata_cfg.get('providers', {}), dict) else {}
+
+        # Backward-compatible geocoding settings (legacy: metadata_extraction.geocoding)
+        legacy_geo_cfg = metadata_cfg.get('geocoding', {}) if isinstance(metadata_cfg.get('geocoding', {}), dict) else {}
+        geocoding_cfg = providers_cfg.get('geocoding', {}) if isinstance(providers_cfg.get('geocoding', {}), dict) else {}
+        geocoding_providers = geocoding_cfg.get('providers', {}) if isinstance(geocoding_cfg.get('providers', {}), dict) else {}
+        cache_cfg = geocoding_cfg.get('cache', {}) if isinstance(geocoding_cfg.get('cache', {}), dict) else {}
+
+        active_provider = str(
+            geocoding_cfg.get('active_provider')
+            or legacy_geo_cfg.get('provider')
+            or 'nominatim'
+        ).lower().strip()
+        provider_order = geocoding_cfg.get('provider_order')
+        if not isinstance(provider_order, list) or not provider_order:
+            provider_order = [active_provider]
+        normalized_order: List[str] = []
+        for provider in provider_order:
+            p = str(provider).lower().strip()
+            if p == 'google':
+                p = 'google_maps'
+            if p and p not in normalized_order:
+                normalized_order.append(p)
+        if active_provider == 'google':
+            active_provider = 'google_maps'
+        if active_provider and active_provider not in normalized_order:
+            normalized_order.insert(0, active_provider)
+
+        self.geocoding_provider = active_provider
+        self.geocoding_provider_order = normalized_order or ['nominatim']
+        self.geocoding_allow_fallback = bool(geocoding_cfg.get('allow_fallback', True))
+
+        self.geocoding_config = legacy_geo_cfg
+        self.cache_enabled = bool(cache_cfg.get('enabled', legacy_geo_cfg.get('cache_enabled', True)))
+        self.cache_file = cache_cfg.get('file', legacy_geo_cfg.get('cache_file', 'geocode_cache.json'))
+        self.cache_only = bool(cache_cfg.get('cache_only', legacy_geo_cfg.get('cache_only', False)))
+        self.rate_limit = float(geocoding_cfg.get('request_delay_seconds', legacy_geo_cfg.get('rate_limit_seconds', 1.0)))
+        self.user_agent = geocoding_cfg.get('user_agent', legacy_geo_cfg.get('user_agent', 'SkiCycleRun/1.0'))
+
+        nominatim_cfg = geocoding_providers.get('nominatim', {}) if isinstance(geocoding_providers.get('nominatim', {}), dict) else {}
+        self.nominatim_api_url = nominatim_cfg.get('api_url', legacy_geo_cfg.get('api_url', 'https://nominatim.openstreetmap.org/reverse'))
+        self.nominatim_zoom = int(nominatim_cfg.get('zoom', legacy_geo_cfg.get('zoom', 14)))
+
+        google_cfg = geocoding_providers.get('google_maps', {}) if isinstance(geocoding_providers.get('google_maps', {}), dict) else {}
+        if not google_cfg and isinstance(geocoding_providers.get('google', {}), dict):
+            google_cfg = geocoding_providers.get('google', {})
+        self.google_cfg = google_cfg
+        self.google_geocode_api_url = google_cfg.get(
+            'geocode_api_url',
+            'https://maps.googleapis.com/maps/api/geocode/json'
+        )
+        # Google remains opt-in; defaults keep this pipeline on open-source providers.
+        self.google_geocode_enabled = bool(google_cfg.get('enabled', False))
+        self.google_geocode_max_calls_per_run = int(google_cfg.get('max_calls_per_run', 0))
+        self.google_geocode_calls_this_run = 0
+        self._google_requested_photos: set[str] = set()
+
         self.last_request_time = 0
         self.cache = self._load_cache()
+        reset_overpass_stats()
+
+        self.call_stats: Dict[str, int] = {
+            'cache_hits': 0,
+            'cache_misses': 0,
+            'provider_attempts_photon': 0,
+            'provider_attempts_nominatim': 0,
+            'provider_attempts_google_maps': 0,
+            'provider_success_photon': 0,
+            'provider_success_nominatim': 0,
+            'provider_success_google_maps': 0,
+            'provider_skips_google_disabled': 0,
+            'provider_skips_google_no_key': 0,
+            'provider_skips_google_budget': 0,
+            'poi_fetch_invocations': 0,
+            'poi_fetch_attempted': 0,
+            'poi_fetch_skipped_disabled': 0,
+            'poi_fetch_skipped_provider': 0,
+            'poi_fetch_skipped_duplicate_photo': 0,
+            'poi_fetch_skipped_duplicate_coordinate': 0,
+        }
+
         # POI enrichment config.
         # POIs are cached in geocode_cache.json and intentionally NOT written to master.json.
-        poi_cfg = config.get('metadata_extraction', {}).get('poi_enrichment', {})
-        self.poi_enabled = poi_cfg.get('enabled', False)
-        self.poi_radius_m = int(poi_cfg.get('radius_m', 50))
-        progressive = poi_cfg.get('progressive_radii_m', [self.poi_radius_m, 120, 250])
+        legacy_poi_cfg = metadata_cfg.get('poi_enrichment', {}) if isinstance(metadata_cfg.get('poi_enrichment', {}), dict) else {}
+        poi_cfg = providers_cfg.get('poi', {}) if isinstance(providers_cfg.get('poi', {}), dict) else {}
+        poi_providers = poi_cfg.get('providers', {}) if isinstance(poi_cfg.get('providers', {}), dict) else {}
+        poi_search_cfg = poi_cfg.get('search', {}) if isinstance(poi_cfg.get('search', {}), dict) else {}
+        overpass_cfg = poi_providers.get('overpass', {}) if isinstance(poi_providers.get('overpass', {}), dict) else {}
+
+        self.poi_enabled = bool(poi_cfg.get('enabled', legacy_poi_cfg.get('enabled', False)))
+        self.poi_provider = str(poi_cfg.get('active_provider', 'overpass')).lower().strip() or 'overpass'
+        self.poi_radius_m = int(poi_search_cfg.get('radius_m', legacy_poi_cfg.get('radius_m', 50)))
+        progressive = poi_search_cfg.get('progressive_radii_m', legacy_poi_cfg.get('progressive_radii_m', [self.poi_radius_m, 120, 250]))
         self.poi_progressive_radii: List[int] = sorted({max(10, int(r)) for r in progressive if r})
         if not self.poi_progressive_radii:
             self.poi_progressive_radii = [self.poi_radius_m]
-        self.poi_max_results = int(poi_cfg.get('max_results', 5))
-        self.poi_timeout_s = int(poi_cfg.get('timeout_seconds', 15))
-        self.places_api_url = poi_cfg.get('places_api_url', 'https://maps.googleapis.com/maps/api/place/nearbysearch/json')
-        self.poi_request_delay_s = float(poi_cfg.get('request_delay_seconds', 2.0))
-        self.poi_rate_limit_backoff_s = int(poi_cfg.get('rate_limit_backoff_seconds', 60))
+        self.poi_max_results = int(poi_search_cfg.get('max_results', legacy_poi_cfg.get('max_results', 5)))
+        self.poi_timeout_s = int(overpass_cfg.get('timeout_seconds', legacy_poi_cfg.get('timeout_seconds', 15)))
+        self.poi_request_delay_s = float(overpass_cfg.get('request_delay_seconds', legacy_poi_cfg.get('request_delay_seconds', 2.0)))
+        self.poi_rate_limit_backoff_s = int(overpass_cfg.get('rate_limit_backoff_seconds', legacy_poi_cfg.get('rate_limit_backoff_seconds', 60)))
+        self.poi_single_call_per_photo = bool(poi_cfg.get('single_call_per_photo', True))
+        self.poi_dedupe_per_coordinate_per_run = bool(poi_cfg.get('dedupe_per_coordinate_per_run', True))
         self.last_poi_request_time = 0.0
         self.poi_backoff_until = 0.0
         self.last_poi_fetch_status = 'not_attempted'
-        configured_categories = [c.lower() for c in poi_cfg.get('categories', []) if c]
+        configured_categories = [c.lower() for c in poi_search_cfg.get('categories', legacy_poi_cfg.get('categories', [])) if c]
         # If categories is empty, use a default "worthy" allow-list.
         self.poi_allowed_categories: List[str] = configured_categories or [
             'lodging',
@@ -91,23 +175,78 @@ class GeoExtractor:
             'make yourself at home', 'sq.ft', 'pets ok', 'pet friendly',
             'book now', 'airbnb', 'vrbo', 'short term rental'
         }
-        self.poi_use_heading = bool(poi_cfg.get('use_heading_filter', False))
-        self.poi_fov_deg = float(poi_cfg.get('fov_degrees', 60))
-        self.poi_max_distance_m = int(poi_cfg.get('max_distance_m', self.poi_radius_m))
-        self.poi_heading_weight = float(poi_cfg.get('heading_weight', 0.7))
-        self.poi_distance_weight = float(poi_cfg.get('distance_weight', 0.3))
+        self.poi_use_heading = bool(poi_search_cfg.get('use_heading_filter', legacy_poi_cfg.get('use_heading_filter', False)))
+        self.poi_fov_deg = float(poi_search_cfg.get('fov_degrees', legacy_poi_cfg.get('fov_degrees', 60)))
+        self.poi_max_distance_m = int(poi_search_cfg.get('max_distance_m', legacy_poi_cfg.get('max_distance_m', self.poi_radius_m)))
+        self.poi_heading_weight = float(poi_search_cfg.get('heading_weight', legacy_poi_cfg.get('heading_weight', 0.7)))
+        self.poi_distance_weight = float(poi_search_cfg.get('distance_weight', legacy_poi_cfg.get('distance_weight', 0.3)))
         self.last_poi_fallback_context: Optional[Dict[str, Any]] = None
+        self._poi_requested_photos: set[str] = set()
+        self._poi_requested_coords: set[str] = set()
+        self._state_lock = Lock()
+
+    _ENV_LOADED = False
+
+    @classmethod
+    def _load_env_file_once(cls) -> None:
+        """Load .env into process environment once (without overriding existing vars)."""
+        if cls._ENV_LOADED:
+            return
+
+        try:
+            project_root = Path(__file__).resolve().parent.parent
+            env_file = project_root / '.env'
+            if env_file.exists():
+                with open(env_file, 'r', encoding='utf-8') as handle:
+                    for line in handle:
+                        line = line.strip()
+                        if not line or line.startswith('#') or '=' not in line:
+                            continue
+                        key, _, value = line.partition('=')
+                        key = key.strip()
+                        value = value.strip()
+                        if key and key not in os.environ:
+                            os.environ[key] = value
+        except Exception:
+            # .env loading is best-effort; normal env vars still work.
+            pass
+
+        cls._ENV_LOADED = True
 
     def _get_google_places_api_key(self) -> Optional[str]:
-        """Load Google Places API key from config or environment."""
-        poi_cfg = self.config.get('metadata_extraction', {}).get('poi_enrichment', {})
-        geocoding_cfg = self.config.get('metadata_extraction', {}).get('geocoding', {})
+        """Load Google API key from environment only (never from JSON config)."""
+        metadata_cfg = self.config.get('metadata_extraction', {})
+        providers_cfg = metadata_cfg.get('providers', {}) if isinstance(metadata_cfg.get('providers', {}), dict) else {}
+        geocoding_unified = providers_cfg.get('geocoding', {}) if isinstance(providers_cfg.get('geocoding', {}), dict) else {}
+        geocoding_providers = geocoding_unified.get('providers', {}) if isinstance(geocoding_unified.get('providers', {}), dict) else {}
+        google_cfg = geocoding_providers.get('google_maps', {}) if isinstance(geocoding_providers.get('google_maps', {}), dict) else {}
+        if not google_cfg and isinstance(geocoding_providers.get('google', {}), dict):
+            google_cfg = geocoding_providers.get('google', {})
+
+        env_var_name = google_cfg.get('api_key_env_var')
+        env_var_key = os.getenv(str(env_var_name).strip()) if env_var_name else None
         return (
-            poi_cfg.get('google_api_key') or
-            geocoding_cfg.get('google_api_key') or
+            env_var_key or
             os.getenv('GOOGLE_MAPS_API_KEY') or
             os.getenv('GOOGLE_PLACES_API_KEY')
         )
+
+    def _consume_google_call_budget(self, photo_request_id: Optional[str]) -> bool:
+        """Enforce one Google request per photo and optional per-run budget."""
+        with self._state_lock:
+            if photo_request_id:
+                normalized = str(photo_request_id)
+                if normalized in self._google_requested_photos:
+                    return False
+                self._google_requested_photos.add(normalized)
+
+            if self.google_geocode_max_calls_per_run <= 0:
+                return False
+            if self.google_geocode_calls_this_run >= self.google_geocode_max_calls_per_run:
+                return False
+
+            self.google_geocode_calls_this_run += 1
+            return True
         
     def _load_cache(self) -> Dict:
         """Load geocoding cache from disk"""
@@ -247,17 +386,19 @@ class GeoExtractor:
         idx = int((deg % 360) / 22.5 + 0.5) % 16
         return dirs[idx]
     
-    def reverse_geocode(self, lat: float, lon: float) -> Optional[Dict]:
-        """Convert coordinates to location using Photon (primary) with Google Maps fallback"""
+    def reverse_geocode(self, lat: float, lon: float, photo_request_id: Optional[str] = None) -> Optional[Dict]:
+        """Convert coordinates to location using configured provider order."""
         # Check cache first
         cache_key = f"{lat:.6f},{lon:.6f}"
         if cache_key in self.cache:
+            self.call_stats['cache_hits'] += 1
             location_info = self.cache[cache_key].copy()
             # Strip POI fields from cached data (they belong in separate cache fields)
             location_info.pop('nearby_pois', None)
             location_info.pop('poi_search', None)
             location_info.pop('photos', None)
             return location_info
+        self.call_stats['cache_misses'] += 1
 
         # Dev mode: cache-only short circuit
         if self.cache_only:
@@ -267,19 +408,39 @@ class GeoExtractor:
         elapsed = time.time() - self.last_request_time
         if elapsed < self.rate_limit:
             time.sleep(self.rate_limit - elapsed)
-        
-        # Try Photon first (free, better POI accuracy)
-        location_info = self._photon_geocode(lat, lon)
-        
-        # Fallback to Google Maps if Photon fails and API key available
-        if not location_info:
-            google_key = self.geocoding_config.get('google_api_key')
-            if google_key:
+
+        location_info = None
+        providers_to_try = self.geocoding_provider_order or [self.geocoding_provider]
+        if not self.geocoding_allow_fallback and providers_to_try:
+            providers_to_try = [providers_to_try[0]]
+
+        for provider in providers_to_try:
+            normalized = provider.strip().lower()
+            if normalized == 'photon':
+                location_info = self._photon_geocode(lat, lon)
+                if location_info:
+                    self.call_stats['provider_success_photon'] += 1
+            elif normalized in {'nominatim', 'osm'}:
+                location_info = self._nominatim_geocode(lat, lon)
+                if location_info:
+                    self.call_stats['provider_success_nominatim'] += 1
+            elif normalized in {'google', 'google_maps'}:
+                if not self.google_geocode_enabled:
+                    self.call_stats['provider_skips_google_disabled'] += 1
+                    continue
+                google_key = self._get_google_places_api_key()
+                if not google_key:
+                    self.call_stats['provider_skips_google_no_key'] += 1
+                    continue
+                if not self._consume_google_call_budget(photo_request_id):
+                    self.call_stats['provider_skips_google_budget'] += 1
+                    continue
                 location_info = self._google_maps_geocode(lat, lon, google_key)
-        
-        # Final fallback to Nominatim (original provider)
-        if not location_info:
-            location_info = self._nominatim_geocode(lat, lon)
+                if location_info:
+                    self.call_stats['provider_success_google_maps'] += 1
+
+            if location_info:
+                break
         
         # Cache the result if we got one
         if location_info:
@@ -305,6 +466,7 @@ class GeoExtractor:
             }
             
             response = requests.get(url, params=params, timeout=10)
+            self.call_stats['provider_attempts_photon'] += 1
             self.last_request_time = time.time()
             
             if response.status_code == 200:
@@ -393,12 +555,12 @@ class GeoExtractor:
     def _nominatim_geocode(self, lat: float, lon: float) -> Optional[Dict]:
         """OpenStreetMap Nominatim - Fallback provider"""
         try:
-            url = self.geocoding_config.get('api_url', 'https://nominatim.openstreetmap.org/reverse')
+            url = self.nominatim_api_url
             params = {
                 'lat': lat,
                 'lon': lon,
                 'format': 'jsonv2',
-                'zoom': int(self.geocoding_config.get('zoom', 14)),
+                'zoom': int(self.nominatim_zoom),
                 'addressdetails': 1,
                 'namedetails': 1,
                 'extratags': 1
@@ -408,6 +570,7 @@ class GeoExtractor:
             }
             
             response = requests.get(url, params=params, headers=headers, timeout=10)
+            self.call_stats['provider_attempts_nominatim'] += 1
             self.last_request_time = time.time()
             
             if response.status_code == 200:
@@ -455,63 +618,16 @@ class GeoExtractor:
         return None
     
     def _google_maps_geocode(self, lat: float, lon: float, api_key: str) -> Optional[Dict]:
-        """Google Maps - Premium fallback for commercial locations"""
+        """Google Maps geocode fallback with a single request per photo invocation."""
         try:
-            # Try Places API first for POI detection
-            places_url = "https://maps.googleapis.com/maps/api/place/nearbysearch/json"
-            
-            for radius in [20, 50, 100]:
-                places_params = {
-                    'location': f"{lat},{lon}",
-                    'radius': radius,
-                    'key': api_key
-                }
-                
-                places_response = requests.get(places_url, params=places_params, timeout=10)
-                if places_response.status_code == 200:
-                    places_data = places_response.json()
-                    
-                    if places_data.get('status') == 'OK' and places_data.get('results'):
-                        # Filter out administrative areas
-                        excluded_types = {'locality', 'political', 'administrative_area_level_1', 
-                                        'administrative_area_level_2', 'administrative_area_level_3',
-                                        'country', 'postal_code', 'neighborhood'}
-                        
-                        for poi in places_data['results']:
-                            poi_types = set(poi.get('types', []))
-                            if not poi_types.issubset(excluded_types) and poi_types - excluded_types:
-                                # Found actual business/POI
-                                address_components = {}
-                                for comp in poi.get('address_components', []):
-                                    comp_type = comp['types'][0] if comp.get('types') else None
-                                    if comp_type:
-                                        address_components[comp_type] = comp.get('long_name')
-                                
-                                return {
-                                    'city': address_components.get('locality'),
-                                    'state': address_components.get('administrative_area_level_1'),
-                                    'country': address_components.get('country'),
-                                    'country_code': address_components.get('country', '').upper()[:2],
-                                    'display_name': poi.get('vicinity', ''),
-                                    'name': poi.get('name'),
-                                    'lat': lat,
-                                    'lon': lon,
-                                    'type': poi.get('types', [None])[0],
-                                    'poi_found': True,
-                                    'provider': 'google',
-                                    'namedetails': {},
-                                    'extratags': {}
-                                }
-                        break
-            
-            # Fallback to regular geocoding
-            geocode_url = "https://maps.googleapis.com/maps/api/geocode/json"
+            geocode_url = self.google_geocode_api_url
             params = {
                 'latlng': f"{lat},{lon}",
                 'key': api_key
             }
-            
+
             response = requests.get(geocode_url, params=params, timeout=10)
+            self.call_stats['provider_attempts_google_maps'] += 1
             if response.status_code == 200:
                 data = response.json()
                 if data.get('status') == 'OK' and data.get('results'):
@@ -682,13 +798,38 @@ class GeoExtractor:
         lon: float,
         heading_deg: Optional[float] = None,
         location_info: Optional[Dict] = None,
+        photo_request_id: Optional[str] = None,
     ) -> List[Dict]:
         """Fetch nearby POIs from Overpass using progressive radius strategy."""
+        self.call_stats['poi_fetch_invocations'] += 1
         self.last_poi_fetch_status = 'not_attempted'
         self.last_poi_fallback_context = None
         if not self.poi_enabled:
             self.last_poi_fetch_status = 'disabled'
+            self.call_stats['poi_fetch_skipped_disabled'] += 1
             return []
+        if self.poi_provider != 'overpass':
+            self.last_poi_fetch_status = f"unsupported_provider:{self.poi_provider}"
+            self.call_stats['poi_fetch_skipped_provider'] += 1
+            return []
+
+        coord_key = f"{lat:.6f},{lon:.6f}"
+        with self._state_lock:
+            if self.poi_single_call_per_photo and photo_request_id:
+                photo_key = str(photo_request_id)
+                if photo_key in self._poi_requested_photos:
+                    self.last_poi_fetch_status = 'duplicate_photo_request_skipped'
+                    self.call_stats['poi_fetch_skipped_duplicate_photo'] += 1
+                    return []
+                self._poi_requested_photos.add(photo_key)
+
+            if self.poi_dedupe_per_coordinate_per_run:
+                if coord_key in self._poi_requested_coords:
+                    self.last_poi_fetch_status = 'coordinate_already_queried_this_run'
+                    self.call_stats['poi_fetch_skipped_duplicate_coordinate'] += 1
+                    return []
+                self._poi_requested_coords.add(coord_key)
+        self.call_stats['poi_fetch_attempted'] += 1
 
         # Keep spacing between batches to avoid hammering Overpass.
         elapsed = time.time() - self.last_poi_request_time
@@ -785,6 +926,58 @@ class GeoExtractor:
         except Exception:
             self.last_poi_fetch_status = 'request_error'
             return []
+
+    def get_api_call_summary(self) -> Dict[str, Any]:
+        """Return API usage summary across geocoding and POI providers."""
+        overpass = get_overpass_stats()
+        geocoding_attempts = {
+            'photon': int(self.call_stats.get('provider_attempts_photon', 0)),
+            'nominatim': int(self.call_stats.get('provider_attempts_nominatim', 0)),
+            'google_maps': int(self.call_stats.get('provider_attempts_google_maps', 0)),
+        }
+        geocoding_success = {
+            'photon': int(self.call_stats.get('provider_success_photon', 0)),
+            'nominatim': int(self.call_stats.get('provider_success_nominatim', 0)),
+            'google_maps': int(self.call_stats.get('provider_success_google_maps', 0)),
+        }
+        geocoding_skips = {
+            'google_disabled': int(self.call_stats.get('provider_skips_google_disabled', 0)),
+            'google_no_key': int(self.call_stats.get('provider_skips_google_no_key', 0)),
+            'google_budget_or_per_photo_limit': int(self.call_stats.get('provider_skips_google_budget', 0)),
+        }
+        poi_summary = {
+            'invocations': int(self.call_stats.get('poi_fetch_invocations', 0)),
+            'attempted': int(self.call_stats.get('poi_fetch_attempted', 0)),
+            'skipped_disabled': int(self.call_stats.get('poi_fetch_skipped_disabled', 0)),
+            'skipped_provider': int(self.call_stats.get('poi_fetch_skipped_provider', 0)),
+            'skipped_duplicate_photo': int(self.call_stats.get('poi_fetch_skipped_duplicate_photo', 0)),
+            'skipped_duplicate_coordinate': int(self.call_stats.get('poi_fetch_skipped_duplicate_coordinate', 0)),
+            'overpass_requests_attempted': int(overpass.get('requests_attempted', 0)),
+            'overpass_requests_succeeded': int(overpass.get('requests_succeeded', 0)),
+            'overpass_http_errors': int(overpass.get('http_errors', 0)),
+            'overpass_timeouts': int(overpass.get('timeouts', 0)),
+            'overpass_request_exceptions': int(overpass.get('request_exceptions', 0)),
+            'overpass_retry_waits': int(overpass.get('retry_waits', 0)),
+            'overpass_queries_failed': int(overpass.get('queries_failed', 0)),
+        }
+
+        return {
+            'cache': {
+                'hits': int(self.call_stats.get('cache_hits', 0)),
+                'misses': int(self.call_stats.get('cache_misses', 0)),
+            },
+            'geocoding': {
+                'active_provider': self.geocoding_provider,
+                'provider_order': list(self.geocoding_provider_order),
+                'attempts': geocoding_attempts,
+                'success': geocoding_success,
+                'skips': geocoding_skips,
+                'google_enabled': bool(self.google_geocode_enabled),
+                'google_max_calls_per_run': int(self.google_geocode_max_calls_per_run),
+                'google_calls_consumed': int(self.google_geocode_calls_this_run),
+            },
+            'poi': poi_summary,
+        }
     
     def _calculate_distance_exact(self, lat1: float, lon1: float, lat2: float, lon2: float) -> float:
         """EXACT distance calculation from debug/test_ollama_structured.py calculate_distance()"""
@@ -1119,7 +1312,7 @@ class GeoExtractor:
                     metadata['date_taken_utc'] = inferred
 
             # Reverse geocode to get location (city / state / country)
-            location_info = self.reverse_geocode(lat, lon)
+            location_info = self.reverse_geocode(lat, lon, photo_request_id=Path(image_path).name)
             if location_info:
                 location_info['formatted'] = self.format_location(location_info)
                 metadata['location'] = location_info
@@ -1147,6 +1340,7 @@ class GeoExtractor:
                         lon,
                         heading_deg=gps_data.get('heading'),
                         location_info=location_info,
+                        photo_request_id=Path(image_path).name,
                     )
                     poi_status = self.last_poi_fetch_status or 'legacy_unknown'
                     cached_data['nearby_pois'] = nearby_pois

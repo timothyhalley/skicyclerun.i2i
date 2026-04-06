@@ -49,53 +49,81 @@
     "enabled": true,
     "extract_exif": true,
     "extract_geolocation": true,
-    "geocoding": {
-      "provider": "nominatim",
-      "api_url": "https://nominatim.openstreetmap.org/reverse",
-      "user_agent": "SkiCycleRun/1.0",
-      "rate_limit_seconds": 1.0,
-      "cache_enabled": true,
-      "cache_file": "{metadata_dir}/geocode_cache.json",
-      "cache_only": false,
-      "zoom": 16
-    },
-    "poi_enrichment": {
-      "enabled": true,
-      "_comment": "POIs are fetched from Google Places during metadata_extraction and stored in geocode_cache.json only (not master.json).",
-      "radius_m": 50,
-      "progressive_radii_m": [50, 120, 250],
-      "max_results": 5,
-      "timeout_seconds": 10,
-      "places_api_url": "https://maps.googleapis.com/maps/api/place/nearbysearch/json",
-      "request_delay_seconds": 0.25,
-      "rate_limit_backoff_seconds": 60,
-      "categories": [
-        "lodging",
-        "restaurant",
-        "cafe",
-        "marketplace",
-        "park",
-        "trailhead",
-        "beach",
-        "mountain",
-        "peak",
-        "volcano",
-        "waterfall",
-        "historic",
-        "memorial",
-        "monument",
-        "museum",
-        "gallery",
-        "attraction",
-        "viewpoint",
-        "national_park",
-        "protected_area"
-      ],
-      "use_heading_filter": false,
-      "fov_degrees": 60,
-      "max_distance_m": 0,
-      "heading_weight": 0.7,
-      "distance_weight": 0.3
+    "providers": {
+      "geocoding": {
+        "active_provider": "nominatim",
+        "provider_order": ["nominatim", "photon"],
+        "allow_fallback": true,
+        "user_agent": "SkiCycleRun/1.0",
+        "request_delay_seconds": 1.0,
+        "cache": {
+          "enabled": true,
+          "file": "{metadata_dir}/geocode_cache.json",
+          "cache_only": false
+        },
+        "providers": {
+          "nominatim": {
+            "api_url": "https://nominatim.openstreetmap.org/reverse",
+            "zoom": 16
+          },
+          "photon": {
+            "enabled": true
+          },
+          "google_maps": {
+            "enabled": false,
+            "_comment": "Paid provider. Keep disabled unless explicitly needed. API keys must be in .env/env vars only (never JSON).",
+            "api_key_env_var": "GOOGLE_MAPS_API_KEY",
+            "geocode_api_url": "https://maps.googleapis.com/maps/api/geocode/json",
+            "places_api_url": "https://maps.googleapis.com/maps/api/place/nearbysearch/json",
+            "max_calls_per_run": 0
+          }
+        }
+      },
+      "poi": {
+        "enabled": true,
+        "active_provider": "overpass",
+        "single_call_per_photo": true,
+        "dedupe_per_coordinate_per_run": true,
+        "search": {
+          "radius_m": 50,
+          "progressive_radii_m": [50, 120, 250],
+          "max_results": 5,
+          "categories": [
+            "lodging",
+            "restaurant",
+            "cafe",
+            "marketplace",
+            "park",
+            "trailhead",
+            "beach",
+            "mountain",
+            "peak",
+            "volcano",
+            "waterfall",
+            "historic",
+            "memorial",
+            "monument",
+            "museum",
+            "gallery",
+            "attraction",
+            "viewpoint",
+            "national_park",
+            "protected_area"
+          ],
+          "use_heading_filter": false,
+          "fov_degrees": 60,
+          "max_distance_m": 0,
+          "heading_weight": 0.7,
+          "distance_weight": 0.3
+        },
+        "providers": {
+          "overpass": {
+            "timeout_seconds": 10,
+            "request_delay_seconds": 0.25,
+            "rate_limit_backoff_seconds": 60
+          }
+        }
+      }
     }
   },
   "preprocessing": {

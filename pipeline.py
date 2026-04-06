@@ -541,6 +541,63 @@ class PipelineRunner:
         if (new_count + failed_count) > 0:
             avg_all = stage_elapsed / (new_count + failed_count)
             logInfo(f"⏱️  Average time per processed image: {avg_all:.2f}s")
+
+        api_summary = geo_extractor.get_api_call_summary()
+        cache_stats = api_summary.get('cache', {})
+        geocode_stats = api_summary.get('geocoding', {})
+        geocode_attempts = geocode_stats.get('attempts', {})
+        geocode_success = geocode_stats.get('success', {})
+        geocode_skips = geocode_stats.get('skips', {})
+        poi_stats = api_summary.get('poi', {})
+
+        logInfo("📡 API Call Summary")
+        logInfo(
+            "   Cache: "
+            f"hits={cache_stats.get('hits', 0)}, misses={cache_stats.get('misses', 0)}"
+        )
+        logInfo(
+            "   Geocoding attempts: "
+            f"photon={geocode_attempts.get('photon', 0)}, "
+            f"nominatim={geocode_attempts.get('nominatim', 0)}, "
+            f"google_maps={geocode_attempts.get('google_maps', 0)}"
+        )
+        logInfo(
+            "   Geocoding success: "
+            f"photon={geocode_success.get('photon', 0)}, "
+            f"nominatim={geocode_success.get('nominatim', 0)}, "
+            f"google_maps={geocode_success.get('google_maps', 0)}"
+        )
+        logInfo(
+            "   Geocoding skips: "
+            f"google_disabled={geocode_skips.get('google_disabled', 0)}, "
+            f"google_no_key={geocode_skips.get('google_no_key', 0)}, "
+            f"google_budget_or_per_photo_limit={geocode_skips.get('google_budget_or_per_photo_limit', 0)}"
+        )
+        logInfo(
+            "   Google limits: "
+            f"enabled={geocode_stats.get('google_enabled', False)}, "
+            f"max_calls_per_run={geocode_stats.get('google_max_calls_per_run', 0)}, "
+            f"calls_consumed={geocode_stats.get('google_calls_consumed', 0)}"
+        )
+        logInfo(
+            "   POI invocations: "
+            f"invocations={poi_stats.get('invocations', 0)}, "
+            f"attempted={poi_stats.get('attempted', 0)}, "
+            f"skipped_disabled={poi_stats.get('skipped_disabled', 0)}, "
+            f"skipped_provider={poi_stats.get('skipped_provider', 0)}, "
+            f"skipped_duplicate_photo={poi_stats.get('skipped_duplicate_photo', 0)}, "
+            f"skipped_duplicate_coordinate={poi_stats.get('skipped_duplicate_coordinate', 0)}"
+        )
+        logInfo(
+            "   Overpass requests: "
+            f"attempted={poi_stats.get('overpass_requests_attempted', 0)}, "
+            f"succeeded={poi_stats.get('overpass_requests_succeeded', 0)}, "
+            f"http_errors={poi_stats.get('overpass_http_errors', 0)}, "
+            f"timeouts={poi_stats.get('overpass_timeouts', 0)}, "
+            f"exceptions={poi_stats.get('overpass_request_exceptions', 0)}, "
+            f"retry_waits={poi_stats.get('overpass_retry_waits', 0)}, "
+            f"queries_failed={poi_stats.get('overpass_queries_failed', 0)}"
+        )
         print("─" * 60 + "\n")
         # No rebuild: master_store already incrementally updated
 
@@ -832,7 +889,7 @@ class PipelineRunner:
             return
         
         # Use resolved paths from self.paths (already processed by resolve_config_placeholders)
-        input_folder = str(Path(self.paths.get('preprocessed')))
+        input_folder = str(Path(lora_config.get('input_folder', self.paths.get('preprocessed'))))
         output_folder = str(Path(self.paths.get('lora_processed')))
         
         # Show relative paths for cleaner output
@@ -843,6 +900,23 @@ class PipelineRunner:
         logInfo(f"📁 Input: {input_rel}")
         logInfo(f"📂 Output: {output_rel}")
         logInfo(f"🎨 Processing {len(loras_to_process)} LoRA styles: {', '.join(loras_to_process)}")
+
+        # Fail fast if LoRA input folder is empty to avoid expensive model load with no work.
+        input_path_obj = Path(input_folder)
+        if not input_path_obj.exists():
+            logError(f"❌ LoRA input folder not found: {input_folder}")
+            raise RuntimeError(f"LoRA input folder missing: {input_folder}")
+
+        input_images = find_images_in_directory(input_path_obj)
+        logInfo(f"🧮 LoRA input images discovered: {len(input_images)}")
+        if not input_images:
+            # IMPORTANT: Never fall back to raw_input/albums for LoRA processing.
+            # Albums can contain large originals and bypassing preprocessing risks
+            # excessive memory use and inconsistent LoRA outputs.
+            logError(f"❌ No images found for LoRA processing in: {input_folder}")
+            logError("💡 Scaled inputs are required before LoRA. Run:")
+            logError("   run_Pipeline.sh --stages preprocessing lora_processing --yes")
+            raise RuntimeError("LoRA processing aborted: scaled input folder contains 0 images")
         
         # Import main.py functions
         import sys
@@ -1623,7 +1697,14 @@ class PipelineRunner:
             path_specs.append({"label": "Export AppleScript", "path": export_script, "type": "file", "optional": False, "create": False})
 
         # Geocode cache file parent path
-        cache_file = self.config.get('metadata_extraction', {}).get('geocoding', {}).get('cache_file')
+        metadata_cfg = self.config.get('metadata_extraction', {})
+        cache_file = (
+            metadata_cfg.get('providers', {})
+            .get('geocoding', {})
+            .get('cache', {})
+            .get('file')
+            or metadata_cfg.get('geocoding', {}).get('cache_file')
+        )
         if cache_file:
             path_specs.append({
                 "label": "Geocode cache", 

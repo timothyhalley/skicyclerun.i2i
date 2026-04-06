@@ -95,11 +95,12 @@ def suppress_known_safe_warnings():
         "ignore",
         message=r"No LoRA keys associated to CLIPTextModel found with the prefix='text_encoder'.*",
     )
+    # Torch/diffusers can emit this warning on non-CUDA systems even when running on MPS/CPU.
+    # Match broadly and avoid module pinning because stacklevel can vary across torch versions.
     warnings.filterwarnings(
         "ignore",
-        message=r"User provided device_type of 'cuda', but CUDA is not available\. Disabling",
+        message=r".*device_type of 'cuda'.*CUDA is not available.*",
         category=UserWarning,
-        module=r"torch\.amp\.autocast_mode",
     )
 
 
@@ -407,6 +408,7 @@ def get_image_files(folder):
 # ────────────────────────────────────────────────────────────────────────
 def main():
     args = parse_args()
+    preflight_image_paths = None
 
     # Silence known-safe third-party warnings that create operator noise.
     suppress_known_safe_warnings()
@@ -727,6 +729,15 @@ def main():
         logInfo("\n✅ Dry run complete - no memory or GPU resources used", console_only=True)
         sys.exit(0)
 
+    # Preflight batch discovery before loading model weights.
+    if args.batch:
+        preflight_image_paths = get_image_files(resolved_input)
+        if not preflight_image_paths:
+            logError(f"No images found in batch input folder: {resolved_input}")
+            logError("Run preprocessing first or pass --input-folder with a populated image directory.")
+            sys.exit(1)
+        logInfo(f"📦 Batch preflight: found {len(preflight_image_paths)} images in {resolved_input}")
+
     if args.debug:
         logDebug(f"PyTorch version: {torch.__version__}")
         logDebug(f"CUDA available: {torch.cuda.is_available()}")
@@ -863,7 +874,7 @@ def main():
     input_base_folder = None
     if args.batch:
         input_base_folder = resolved_input  # Use the resolved input (respects --input override)
-        image_paths = get_image_files(resolved_input)
+        image_paths = preflight_image_paths if preflight_image_paths is not None else get_image_files(resolved_input)
         if args.debug:
             logDebug(f"Found {len(image_paths)} images in {input_base_folder} (including subfolders)")
     elif args.file is not None:
