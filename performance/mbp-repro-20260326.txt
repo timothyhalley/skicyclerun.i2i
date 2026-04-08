@@ -42,7 +42,7 @@ torchvision==0.23.0
 
 # Hugging Face ecosystem
 diffusers==0.35.2
-transformers==4.57.1
+transformers==5.0.0rc3
 accelerate==1.11.0
 
 # LoRA and model fine-tuning
