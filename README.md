@@ -48,6 +48,10 @@ python3 main.py
 ./run_Pipeline.sh --yes
 ```
 
+## 📚 Documentation
+
+- [Image Scale Guide](docs/IMAGE_SCALE_GUIDE.md) - How preprocessing and LoRA stages determine inference and final output image dimensions.
+
 ---
 
 ## 🖥️ Setup & Run (CLI)
@@ -117,6 +121,8 @@ touch /tmp/skicyclerun_stop
 skicyclerun.i2i/
 ├── main.py                     # 🖥️ Native macOS UI entry point
 ├── pipeline.py                 # ⌨️ CLI orchestrator (8 stages)
+├── docs/
+│   └── IMAGE_SCALE_GUIDE.md    # Image sizing flow (preprocess -> LoRA -> output)
 ├── config/
 │   ├── pipeline_config.json    # Unified pipeline & LoRA configuration
 │   └── lora_registry.json      # 26 LoRA style definitions
