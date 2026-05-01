@@ -168,23 +168,10 @@ Your token is saved to:
    - Preserves album folder structure
    - Output: `phase1_extract/scaled/[AlbumName]/`
 
-4. **Apply Watermarks**
-
-   ```bash
-   python pipeline.py --stages watermarking
-   ```
-
-   - Applies: `SkiCycleRun © 2026 ♍️ Montreal, Quebec`
-   - Zodiac symbol based on photo date taken
-   - Asimovian font with emoji support
-   - Smart renaming (IMG_1234 → montreal_quebec_1234)
-   - Skips location text if GPS unavailable (keeps © and symbol)
-   - Output: `phase1_extract/watermarked/[AlbumName]/`
-
 ### Run All Phase 1 Steps
 
 ```bash
-python pipeline.py --stages export metadata_extraction preprocessing watermarking
+python pipeline.py --stages export metadata_extraction preprocessing
 ```
 
 ### Idempotency
@@ -193,7 +180,6 @@ All stages check for existing output and skip duplicates:
 
 - Metadata extraction: Skips images already cataloged
 - Preprocessing: Skips images already scaled
-- Watermarking: Skips images already watermarked
 
 ---
 

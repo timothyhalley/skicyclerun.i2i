@@ -109,7 +109,6 @@ This document traces the complete code execution flow for the export stage, incl
 │              │         'metadata_extraction': run_metadata_extraction_stage,
 │              │         'llm_image_analysis': run_llm_image_analysis_stage,
 │              │         'preprocessing': run_preprocessing_stage,
-│              │         'watermarking': run_watermarking_stage,
 │              │         'lora_processing': run_lora_processing_stage,
 │              │         'post_lora_watermarking': run_post_lora_watermarking_stage,
 │              │         's3_deployment': run_s3_deployment_stage
@@ -422,13 +421,11 @@ This document traces the complete code execution flow for the export stage, incl
 ### 🔴 Critical Issues
 
 1. **No Export Cataloging**
-
    - Exported files are NOT recorded in `master.json`
    - Downstream stages must rediscover files via filesystem scan
    - No tracking of export timestamp or source album
 
 2. **Heavy Initialization for Simple Export**
-
    - Full config load and validation even for single stage
    - MasterStore initialized but unused
    - All paths validated (LoRA, watermark, S3) when only `albums/` needed
@@ -441,13 +438,11 @@ This document traces the complete code execution flow for the export stage, incl
 ### ⚠️ Medium Issues
 
 4. **Cleanup Logic Coupled to Export**
-
    - `will_export` flag couples cleanup behavior to pipeline intent
    - Can't run cleanup independently to archive without cleaning
    - Confusing behavior: `--stages cleanup` alone doesn't clean!
 
 5. **Error Handling Gaps**
-
    - Partial album export failures not tracked
    - If AppleScript times out, unclear which albums succeeded
    - No retry mechanism for failed albums
@@ -497,13 +492,11 @@ This document traces the complete code execution flow for the export stage, incl
 ### Phase 2: Architecture Refactor (Future)
 
 4. **Lazy Stage Initialization**
-
    - Don't initialize MasterStore until first used
    - Load config sections on-demand per stage
    - Defer heavy imports (torch, diffusers) until LoRA stage
 
 5. **Streaming Export Progress**
-
    - Modify AppleScript to emit progress logs
    - Python captures and displays real-time updates
    - Example: "PROGRESS: album_2_of_5 | photo_15_of_42"

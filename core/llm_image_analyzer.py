@@ -135,7 +135,15 @@ class LLMImageAnalyzer:
         geo_payload.pop('LLM_Watermark_Line1', None)
         geo_payload.pop('LLM_Watermark_Line2', None)
         geo_json = json.dumps(geo_payload, indent=2, ensure_ascii=False)
-        
+
+        # LINE 2 format hint: for US/Canada drop the country name; keep it for all other countries
+        if country in ('United States', 'Canada'):
+            line2_format_hint = (
+                "[City], [State/Province] — do NOT include the country name for United States or Canada"
+            )
+        else:
+            line2_format_hint = "[Specific street/area if important] | [City], [Country]"
+
         prompt = f"""You MUST return valid JSON only. Do not include any text outside the JSON object.
 
 You are a highly professional, objective content specialist writing terse factual watermark text.
@@ -189,7 +197,7 @@ RULES:
 - LINE 1 must not mention the city name unless unavoidable
 - LINE 1 should prefer road, trail, park, area, or nearest grounded POI context
 - LINE 2 must be a deterministic location stamp grounded only in provided metadata
-- LINE 2 format target: [Specific street/area if important] | [City], [State/Province], [Country]
+- LINE 2 format target: {line2_format_hint}
 - If the street or area is weak, omit it and use the strongest deterministic location stamp
 - If nearby POIs are empty, use BASE LOCATION CONTEXT only as grounding; do not invent POIs
 - Reuse exact names from metadata when possible
@@ -367,7 +375,14 @@ OUTPUT FORMAT:
                     line2_words = analysis_data.get('LLM_Watermark_Line2', '').split()
                     analysis_data['LLM_Watermark_Line1'] = " ".join(line1_words[: self.max_line1_words])[:100]
                     analysis_data['LLM_Watermark_Line2'] = " ".join(line2_words[: self.max_line2_words])[:140]
-                    
+
+                    # Post-process: strip trailing country name for US/Canada
+                    _country = location.get('country', '')
+                    if _country in ('United States', 'Canada'):
+                        _line2 = analysis_data.get('LLM_Watermark_Line2', '')
+                        _line2 = re.sub(r',?\s*(United States|Canada)\s*$', '', _line2, flags=re.IGNORECASE).strip()
+                        analysis_data['LLM_Watermark_Line2'] = _line2
+
                     return analysis_data
                     
                 except json.JSONDecodeError as e:
@@ -429,7 +444,11 @@ OUTPUT FORMAT:
         line2_parts = []
         if road and city:
             line2_parts.append(road)
-        locality = ', '.join([part for part in [city, state, country] if part])
+        # For US/Canada omit the country name; include it for all other countries
+        if country in ('United States', 'Canada'):
+            locality = ', '.join([part for part in [city, state] if part])
+        else:
+            locality = ', '.join([part for part in [city, state, country] if part])
         if locality:
             line2_parts.append(locality)
         line2_value = ' | '.join(line2_parts) if line2_parts else location_formatted

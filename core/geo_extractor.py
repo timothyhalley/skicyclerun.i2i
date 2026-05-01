@@ -792,6 +792,34 @@ class GeoExtractor:
             'provider': provider,
         }
 
+    def _build_fallback_pois_from_location(self, location_info: Optional[Dict]) -> List[Dict[str, Any]]:
+        """Build a minimal POI list from reverse-geocode context when Overpass is unavailable."""
+        context = self._build_poi_fallback_context(location_info)
+        if not context:
+            return []
+
+        name = (context.get('anchor') or context.get('summary') or '').strip()
+        if not name:
+            return []
+
+        category = str(context.get('type') or 'location').strip().lower() or 'location'
+        provider = str(context.get('provider') or 'reverse_geocode').strip().lower()
+        wikidata = None
+        if isinstance(location_info, dict):
+            wikidata = (location_info.get('extratags') or {}).get('wikidata')
+
+        return [{
+            'name': name,
+            'category': f"fallback_{category}",
+            'type': f"fallback_{category}",
+            'distance_m': 0.0,
+            'bearing_deg': None,
+            'bearing_cardinal': None,
+            'wikidata': wikidata,
+            'provider': provider,
+            'is_fallback': True,
+        }]
+
     def fetch_pois(
         self,
         lat: float,
@@ -912,20 +940,36 @@ class GeoExtractor:
             self.last_poi_fetch_status = 'success' if pois else 'no_pois_found'
             if not pois:
                 self.last_poi_fallback_context = self._build_poi_fallback_context(location_info)
+                fallback_pois = self._build_fallback_pois_from_location(location_info)
+                if fallback_pois:
+                    pois = fallback_pois
+                    self.last_poi_fetch_status = 'fallback_context'
                 if self.last_poi_fallback_context:
                     print(
                         "      • Base location: "
                         f"{self.last_poi_fallback_context['summary']} "
                         f"[{self.last_poi_fallback_context['type']}]"
                     )
+                if pois:
+                    print("      • Using reverse-geocode fallback context as POI")
             print(f"   ✅ Overpass returned {len(pois)} POIs")
             return pois
         except requests.exceptions.Timeout:
             self.last_poi_fetch_status = 'timeout'
-            return []
+            fallback_pois = self._build_fallback_pois_from_location(location_info)
+            if fallback_pois:
+                self.last_poi_fetch_status = 'fallback_context'
+                self.last_poi_fallback_context = self._build_poi_fallback_context(location_info)
+                print("      • Overpass timeout; using reverse-geocode fallback context")
+            return fallback_pois
         except Exception:
             self.last_poi_fetch_status = 'request_error'
-            return []
+            fallback_pois = self._build_fallback_pois_from_location(location_info)
+            if fallback_pois:
+                self.last_poi_fetch_status = 'fallback_context'
+                self.last_poi_fallback_context = self._build_poi_fallback_context(location_info)
+                print("      • Overpass error; using reverse-geocode fallback context")
+            return fallback_pois
 
     def get_api_call_summary(self) -> Dict[str, Any]:
         """Return API usage summary across geocoding and POI providers."""

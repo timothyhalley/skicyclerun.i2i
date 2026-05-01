@@ -11,6 +11,7 @@ import datetime
 import glob
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -136,11 +137,157 @@ def _load_poi_filter_config() -> Dict[str, Any]:
         return defaults
 
 
+def _load_llm_blend_config() -> Dict[str, Any]:
+    """Load hybrid LLM+rules watermark settings."""
+    defaults: Dict[str, Any] = {
+        "enabled": True,
+        "line1_prefer_llm": True,
+        "line1_require_grounding": True,
+        "line1_max_words": 10,
+        "line2_prefer_llm": True,
+        "line2_use_llm_context_prefix": True,
+        "line2_require_grounding": True,
+    }
+    try:
+        with open(_PIPELINE_CONFIG_PATH, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+        wm_cfg = cfg.get("watermark", {}) if isinstance(cfg, dict) else {}
+        blend_cfg = wm_cfg.get("llm_blend", {}) if isinstance(wm_cfg, dict) else {}
+        if not isinstance(blend_cfg, dict):
+            return defaults
+        return {**defaults, **blend_cfg}
+    except Exception:
+        return defaults
+
+
 # Module-level defaults (loaded once at import time).
 BILINGUAL_OUTPUT: bool = _load_bilingual_output(True)
 COPYRIGHT_STRING: str = _load_copyright_string()
 LINE1_RULE_CONFIG: Dict[str, Any] = _load_line1_rule_config()
 POI_FILTER_CONFIG: Dict[str, Any] = _load_poi_filter_config()
+LLM_BLEND_CONFIG: Dict[str, Any] = _load_llm_blend_config()
+
+
+def _tokenize_text(value: str) -> List[str]:
+    return [tok for tok in re.split(r"[^a-z0-9]+", (value or "").lower()) if len(tok) >= 3]
+
+
+def _grounding_terms(reverse_info: Dict[str, Any], here_place: Optional[Dict[str, Any]], nearby_pois: List[Dict[str, Any]]) -> set:
+    """Build a set of factual location tokens that LLM text must reference."""
+    terms: set = set()
+    address = reverse_info.get("address") or {}
+
+    for key in ("road", "city", "town", "village", "hamlet", "suburb", "state", "country"):
+        for tok in _tokenize_text(str(address.get(key) or "")):
+            terms.add(tok)
+
+    if here_place:
+        for tok in _tokenize_text(str(here_place.get("name") or "")):
+            terms.add(tok)
+
+    for poi in nearby_pois[:5]:
+        for tok in _tokenize_text(str(poi.get("name") or "")):
+            terms.add(tok)
+
+    return terms
+
+
+def _is_grounded_text(value: str, grounding_terms: set) -> bool:
+    tokens = set(_tokenize_text(value))
+    if not tokens:
+        return False
+    return bool(tokens & grounding_terms)
+
+
+def _strip_existing_copyright(value: str) -> str:
+    """Remove already-present SkiCycleRun copyright suffix to prevent duplication."""
+    text = (value or "").strip()
+    if not text:
+        return ""
+
+    normalized = re.sub(r"\s+", " ", text)
+    if "skicyclerun" not in normalized.lower():
+        return text
+
+    split_idx = normalized.lower().find(" skicyclerun")
+    if split_idx > 0:
+        return normalized[:split_idx].rstrip(" |,-")
+
+    return text
+
+
+def _append_copyright_suffix(line2: str) -> str:
+    """Append configured copyright text with stable single-space separation."""
+    base = _strip_existing_copyright(line2)
+    if not COPYRIGHT_STRING:
+        return base
+    if not base:
+        return COPYRIGHT_STRING
+    return f"{base} {COPYRIGHT_STRING}"
+
+
+def _compose_hybrid_lines(
+    rule_line1: str,
+    rule_line2: str,
+    reverse_info: Dict[str, Any],
+    here_place: Optional[Dict[str, Any]],
+    nearby_pois: List[Dict[str, Any]],
+    cached_geo: Optional[Dict[str, Any]],
+) -> Dict[str, str]:
+    """Blend LLM wording with rule-based factual lines.
+
+    Line 1: prefer LLM phrasing when it is grounded in factual metadata/POIs.
+    Line 2: keep deterministic rule locality and optionally prepend grounded LLM context.
+    """
+    cfg = LLM_BLEND_CONFIG or {}
+    if not bool(cfg.get("enabled", True)):
+        return {
+            "line1": rule_line1,
+            "line2": rule_line2,
+            "line1_source": "rules",
+            "line2_source": "rules",
+        }
+
+    cached_geo = cached_geo or {}
+    llm_line1 = str(cached_geo.get("LLM_Watermark_Line1") or "").strip()
+    llm_line2 = str(cached_geo.get("LLM_Watermark_Line2") or "").strip()
+
+    grounding = _grounding_terms(reverse_info, here_place, nearby_pois)
+
+    line1 = rule_line1
+    line1_source = "rules"
+    if llm_line1 and bool(cfg.get("line1_prefer_llm", True)):
+        require_grounding = bool(cfg.get("line1_require_grounding", True))
+        if (not require_grounding) or _is_grounded_text(llm_line1, grounding):
+            line1 = llm_line1
+            line1_source = "llm"
+
+    max_words_line1 = max(3, int(cfg.get("line1_max_words", 10)))
+    line1 = " ".join(line1.split()[:max_words_line1]).strip() or rule_line1
+
+    line2 = rule_line2
+    line2_source = "rules"
+    if llm_line2:
+        llm_clean = _strip_existing_copyright(llm_line2)
+        llm_prefix = llm_clean.split("|")[0].strip()
+        if llm_clean and llm_prefix.lower() not in {"unknown", "unknown location", "n/a"}:
+            require_grounding = bool(cfg.get("line2_require_grounding", True))
+            grounded = _is_grounded_text(llm_clean, grounding)
+
+            if bool(cfg.get("line2_prefer_llm", True)) and ((not require_grounding) or grounded):
+                line2 = llm_clean
+                line2_source = "llm"
+            elif bool(cfg.get("line2_use_llm_context_prefix", True)) and ((not require_grounding) or grounded):
+                if llm_prefix.lower() not in rule_line2.lower():
+                    line2 = f"{llm_prefix} | {rule_line2}"
+                    line2_source = "llm_context+rules"
+
+    return {
+        "line1": line1,
+        "line2": line2,
+        "line1_source": line1_source,
+        "line2_source": line2_source,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -278,8 +425,7 @@ def process_photo(
         line2 = format_bilingual(line2, line2_en)
 
     # --- Copyright brand ---
-    if COPYRIGHT_STRING:
-        line2 = f"{line2}  {COPYRIGHT_STRING}"
+    line2 = _append_copyright_suffix(line2)
 
     # --- Terminal output ---
     here_summary_parts = []
@@ -460,14 +606,25 @@ def build_watermark_from_cached_context(
         line1_rule_config=LINE1_RULE_CONFIG,
     )
 
+    # Hybrid compose: blend LLM wording with deterministic rule-based lines.
+    hybrid = _compose_hybrid_lines(
+        rule_line1=line1,
+        rule_line2=line2,
+        reverse_info=reverse_info,
+        here_place=here_place,
+        nearby_pois=nearby_pois,
+        cached_geo=cached_geo,
+    )
+    line1 = hybrid["line1"]
+    line2 = hybrid["line2"]
+
     # Bilingual translation in cached-only mode is intentionally skipped because
     # it would require an additional reverse-geocode request.
     if bilingual_output:
         line1 = format_bilingual(line1, "")
         line2 = format_bilingual(line2, "")
 
-    if COPYRIGHT_STRING:
-        line2 = f"{line2}  {COPYRIGHT_STRING}"
+    line2 = _append_copyright_suffix(line2)
 
     return {
         "lat": lat,
@@ -479,6 +636,8 @@ def build_watermark_from_cached_context(
         "fallback_context": fallback_context,
         "line1": line1,
         "line2": line2,
+        "line1_source": hybrid.get("line1_source", "rules"),
+        "line2_source": hybrid.get("line2_source", "rules"),
         "watermark": f"{line1}\n{line2}",
         "from_cache": True,
     }

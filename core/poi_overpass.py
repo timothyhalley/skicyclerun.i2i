@@ -89,12 +89,18 @@ def query_osm(
     query: str, max_retries: int = 6, log_prefix: str = ""
 ) -> List[Dict[str, Any]]:
     """Execute an Overpass QL query and return the ``elements`` list."""
+    headers = {
+        "User-Agent": "SkiCycleRun-POI-Watermark/1.0",
+        "Accept": "application/json",
+        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+    }
+
     for attempt in range(max_retries):
         _limiter.wait_if_needed()
         server = random.choice(OVERPASS_SERVERS)
         _stats["requests_attempted"] += 1
         try:
-            response = requests.post(server, data={"data": query}, timeout=60)
+            response = requests.post(server, data={"data": query}, headers=headers, timeout=60)
             if response.status_code in (429, 502, 503, 504):
                 wait = _limiter.get_backoff_wait(attempt)
                 _limiter.record_failure()
@@ -110,6 +116,32 @@ def query_osm(
             _limiter.record_success()
             _stats["requests_succeeded"] += 1
             return response.json().get("elements", [])
+        except requests.exceptions.HTTPError as exc:
+            status_code = exc.response.status_code if exc.response is not None else None
+            _limiter.record_failure()
+            _stats["http_errors"] += 1
+
+            # 4xx errors (except 429) are typically query/payload compatibility issues.
+            # Retrying with backoff only burns time and repeats noisy logs.
+            if status_code is not None and 400 <= status_code < 500 and status_code != 429:
+                body_preview = ""
+                if exc.response is not None and exc.response.text:
+                    body_preview = exc.response.text.strip().replace("\n", " ")[:180]
+                detail = f" | response: {body_preview}" if body_preview else ""
+                print(
+                    f"{log_prefix}[Overpass] NON-RETRYABLE HTTP {status_code} from {server} "
+                    f"(attempt {attempt + 1}/{max_retries}). Aborting retries.{detail}"
+                )
+                _stats["queries_failed"] += 1
+                return []
+
+            wait = _limiter.get_backoff_wait(attempt)
+            _stats["retry_waits"] += 1
+            print(
+                f"{log_prefix}[Overpass] HTTP error on {server} "
+                f"(attempt {attempt + 1}/{max_retries}): {exc}. Back off {wait:.1f}s…"
+            )
+            time.sleep(wait)
         except requests.exceptions.Timeout:
             wait = _limiter.get_backoff_wait(attempt)
             _limiter.record_failure()

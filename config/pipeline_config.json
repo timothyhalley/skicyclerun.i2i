@@ -7,7 +7,6 @@
       "cleanup",
       "metadata_extraction",
       "preprocessing",
-      "watermarking",
       "lora_processing",
       "post_lora_watermarking",
       "s3_deployment"
@@ -168,6 +167,15 @@
         "attraction"
       ]
     },
+    "llm_blend": {
+      "_comment": "Hybrid composition: use LLM phrasing only when grounded by factual metadata/POIs",
+      "enabled": true,
+      "line1_prefer_llm": true,
+      "line1_require_grounding": true,
+      "line1_max_words": 10,
+      "line2_use_llm_context_prefix": false,
+      "line2_require_grounding": true
+    },
     "poi_filter": {
       "_comment": "Nearby POI filtering for readable watermark context before LINE 1 composition",
       "max_distance_m": 75,
@@ -245,7 +253,7 @@
     "batch_mode": true,
     "preserve_metadata": true,
     "_loras_to_process_comment": "Special entries: 'NoLoRA' copies scaled images without style transfer (pass-through mode). Include as first entry to generate unmodified baseline images alongside stylized versions.",
-    "loras_to_process": ["Afremov"],
+    "loras_to_process": ["NoLoRA"],
     "_Available_loras": [
       "PencilDrawing",
       "FractalGeometry",

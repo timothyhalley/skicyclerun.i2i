@@ -78,7 +78,7 @@ for arg in "$@"; do
       has_stages_flag=1
       normalized_args+=("$arg")
       ;;
-    --export|--cleanup|--metadata_extraction|--preprocessing|--watermarking|--lora_processing|--post_lora_watermarking|--s3_deployment)
+    --export|--cleanup|--metadata_extraction|--preprocessing|--lora_processing|--post_lora_watermarking|--s3_deployment)
       shortcut_stages+=("${arg#--}")
       ;;
     *)

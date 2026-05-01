@@ -142,35 +142,51 @@ class PipelineRunner:
 
     # Master catalog rebuild removed; using incremental MasterStore updates instead.
     
-    def _catalog_exported_files(self):
-        """Catalog exported files in master store after successful export"""
+    def _catalog_exported_files(self) -> Dict[str, int]:
+        """Catalog exported files in master store after successful export."""
         if not self.master_store:
             logWarn("⚠️  MasterStore not configured; skipping export cataloging")
-            return
+            return {
+                "total_found": 0,
+                "newly_cataloged": 0,
+                "already_cataloged": 0,
+            }
         
         export_path = Path(self.paths.get('apple_photos_export'))
         if not export_path.exists():
             logWarn(f"⚠️  Export path does not exist: {export_path}")
-            return
+            return {
+                "total_found": 0,
+                "newly_cataloged": 0,
+                "already_cataloged": 0,
+            }
         
         image_files = find_images_in_directory(export_path)
+        total_found = len(image_files)
         cataloged = 0
+        already_cataloged = 0
+        album_total_counts: Dict[str, int] = {}
+        album_new_counts: Dict[str, int] = {}
+        album_existing_counts: Dict[str, int] = {}
         
         for image_path in image_files:
             image_path_str = str(image_path)
             
-            # Skip if already cataloged
-            if self.master_store.has_stage(image_path_str, 'export'):
-                continue
-            
-            # Extract album name from folder structure
-            album_name = None
+            album_name = "_root"
             try:
                 relative = image_path.relative_to(export_path)
                 if len(relative.parts) > 1:
                     album_name = relative.parts[0]
             except ValueError:
                 pass
+
+            album_total_counts[album_name] = album_total_counts.get(album_name, 0) + 1
+
+            # Skip if already cataloged
+            if self.master_store.has_stage(image_path_str, 'export'):
+                already_cataloged += 1
+                album_existing_counts[album_name] = album_existing_counts.get(album_name, 0) + 1
+                continue
             
             # Create initial entry for exported file
             patch = {
@@ -183,9 +199,29 @@ class PipelineRunner:
             
             self.master_store.update_entry(image_path_str, patch, stage='export')
             cataloged += 1
-        
-        if cataloged > 0:
-            logInfo(f"📝 Cataloged {cataloged} exported files in master store")
+            album_new_counts[album_name] = album_new_counts.get(album_name, 0) + 1
+
+        logInfo(
+            "📝 Export catalog scan: "
+            f"{total_found} image files found | "
+            f"{cataloged} newly cataloged | "
+            f"{already_cataloged} already cataloged"
+        )
+
+        if album_total_counts:
+            logInfo("📚 Per-album image counts (found | new | already):")
+            for album_name in sorted(album_total_counts.keys()):
+                total = album_total_counts.get(album_name, 0)
+                new_count = album_new_counts.get(album_name, 0)
+                existing = album_existing_counts.get(album_name, 0)
+                label = "(root)" if album_name == "_root" else album_name
+                logInfo(f"   - {label}: {total} | {new_count} | {existing}")
+
+        return {
+            "total_found": total_found,
+            "newly_cataloged": cataloged,
+            "already_cataloged": already_cataloged,
+        }
 
     def _load_geocode_cache(self) -> Dict:
         """Load geocode cache used for POI and per-coordinate photo grouping."""
@@ -278,10 +314,16 @@ class PipelineRunner:
             
             if result.returncode == 0:
                 logInfo(f"✅ Export complete")
-                logInfo(result.stdout)
+                if result.stdout and result.stdout.strip():
+                    logInfo(result.stdout)
+                if result.stderr and result.stderr.strip():
+                    logInfo("📋 AppleScript logs:")
+                    logInfo(result.stderr)
                 
                 # Catalog exported files in master store
-                self._catalog_exported_files()
+                summary = self._catalog_exported_files()
+                if summary.get("total_found", 0) == 0:
+                    logWarn("⚠️  No image files were found under the export folder after export")
             else:
                 logError(f"❌ Export failed: {result.stderr}")
                 
@@ -667,6 +709,9 @@ class PipelineRunner:
 
         # Update master store entries per processed output
         if self.master_store:
+            total_updates = len(processed_catalog)
+            logInfo(f"📝 Updating master store for {total_updates} preprocessed entries...")
+            updated_count = 0
             for out_path, meta in processed_catalog.items():
                 section = {
                     "input_path": meta.get("input_path"),
@@ -694,23 +739,22 @@ class PipelineRunner:
                 if meta.get('date_taken_utc'):
                     patch['date_taken_utc'] = meta.get('date_taken_utc')
                 # Store preprocessed output under source entry as derivative
-                self.master_store.update_entry(out_path, patch, stage='preprocessing', source_path=source_image_path)
+                self.master_store.update_entry(
+                    out_path,
+                    patch,
+                    stage='preprocessing',
+                    source_path=source_image_path,
+                    save=False,
+                )
+                updated_count += 1
+                if updated_count % 250 == 0 or updated_count == total_updates:
+                    logInfo(f"   📌 Master store updates: {updated_count}/{total_updates}")
+
+            # Persist once instead of rewriting master.json per image.
+            self.master_store.save()
+            logInfo("✅ Master store write complete")
 
         logInfo("✅ Preprocessing complete")
-
-    def run_watermarking_stage(self):
-        """Stage 5: Pre-LoRA watermarking (optional)."""
-        wm_cfg = self.config.get('watermark', {})
-        if not wm_cfg.get('enabled', False):
-            logInfo("⏭️  Watermarking disabled, skipping...")
-            return
-
-        if not wm_cfg.get('apply_before_lora', True):
-            logInfo("⏭️  Pre-LoRA watermarking disabled via apply_before_lora=false")
-            return
-
-        # Kept for compatibility with stage map; primary watermarking happens post-LoRA.
-        logInfo("ℹ️  Pre-LoRA watermarking compatibility stage retained but not used in current flow.")
 
     def run_llm_image_analysis_stage(self):
         """Stage 5: Generate LLM-suggested watermark lines into geocode_cache.json."""
@@ -1563,7 +1607,6 @@ class PipelineRunner:
             'metadata_extraction': self.run_metadata_extraction_stage,
             'llm_image_analysis': self.run_llm_image_analysis_stage,
             'preprocessing': self.run_preprocessing_stage,
-            'watermarking': self.run_watermarking_stage,
             'lora_processing': self.run_lora_processing_stage,
             'post_lora_watermarking': self.run_post_lora_watermarking_stage,
             's3_deployment': self.run_s3_deployment_stage
@@ -1595,7 +1638,6 @@ class PipelineRunner:
             'metadata_extraction',
             'llm_image_analysis',
             'preprocessing',
-            'watermarking',
             'lora_processing',
             'post_lora_watermarking',
             's3_deployment'
@@ -1623,7 +1665,6 @@ class PipelineRunner:
                 'metadata_extraction': '   Extract EXIF metadata and GPS coordinates from exported images',
                 'llm_image_analysis': '   Generate terse LLM line-1 candidates from image content',
                 'preprocessing': '   Resize and optimize images for LoRA processing',
-                'watermarking': '   Run compatibility pre-LoRA watermark stage',
                 'lora_processing': '   Apply artistic style filters with FLUX LoRA models',
                 'post_lora_watermarking': '   Add watermarks to LoRA-processed images',
                 's3_deployment': '   Deploy final images to AWS S3'
@@ -1838,7 +1879,6 @@ if __name__ == "__main__":
         "  metadata_extraction    Extract EXIF/GPS + geocode + POI cache\n"
         "  llm_image_analysis     Generate terse LINE 1 candidates with gemma4\n"
         "  preprocessing          Resize and optimize source images\n"
-        "  watermarking           Pre-LoRA watermark stage (compatibility)\n"
         "  lora_processing        Generate style variants with LoRA\n"
         "  post_lora_watermarking Build/apply final LINE1/LINE2 watermarks\n"
         "  s3_deployment          Upload final outputs to AWS S3"
