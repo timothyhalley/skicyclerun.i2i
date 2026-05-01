@@ -7,7 +7,7 @@
 torch==2.7.0
 torchvision==0.22.0
 diffusers @ git+https://github.com/huggingface/diffusers.git@23ebbb4bc81a17ebea17cb7cb94f301199e49a7f
-transformers==4.57.1
+transformers==5.0.0rc3
 accelerate==1.10.1
 peft==0.17.1
 sentencepiece==0.2.1
