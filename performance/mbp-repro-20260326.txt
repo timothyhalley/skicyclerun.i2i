@@ -50,7 +50,7 @@ peft==0.18.1
 
 # Tokenization and text processing
 sentencepiece==0.2.1
-protobuf==7.34.1
+protobuf==6.33.5
 
 # Model storage and safety
 safetensors==0.7.0
