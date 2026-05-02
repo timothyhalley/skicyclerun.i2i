@@ -156,6 +156,7 @@ Default config: config/pipeline_config.json (override with --config)
     parser.add_argument("--seed", type=int, help="Random seed for reproducibility (auto-generated if not specified)")
     parser.add_argument("--list-loras", action="store_true", help="List available LoRA adapters and exit")
     parser.add_argument("--batch", action="store_true", help="Process all images in input folder and subfolders")
+    parser.add_argument("--album", type=str, help="Limit batch processing to a specific album subfolder under input folder")
     parser.add_argument("--file", type=str, nargs='?', const='', help="Process a specific image file (FQDN path or relative to input folder). If no path specified, uses input_image from config.")
     parser.add_argument("--verbose", action="store_true", help="Enable verbose logging")
     parser.add_argument("--preview", action="store_true", help="Save preprocessed image before inference")
@@ -396,11 +397,19 @@ def save_passthrough_copy(image_path, config, input_base_folder=None, lora_name=
 # ────────────────────────────────────────────────────────────────────────
 # Batch image discovery (recursive)
 # ────────────────────────────────────────────────────────────────────────
-def get_image_files(folder):
+def get_image_files(folder, album_filter=None):
+    search_root = folder
+    if album_filter:
+        search_root = os.path.join(folder, album_filter)
+        if not os.path.isdir(search_root):
+            logWarn(f"Album folder not found: {album_filter}")
+            logWarn(f"Expected: {search_root}")
+            return []
+
     image_files = []
     # Use recursive glob to find images in all subfolders
     for pattern in ["*.png", "*.jpg", "*.jpeg", "*.webp", "*.PNG", "*.JPG", "*.JPEG", "*.WEBP"]:
-        image_files.extend(glob(os.path.join(folder, "**", pattern), recursive=True))
+        image_files.extend(glob(os.path.join(search_root, "**", pattern), recursive=True))
     return sorted(image_files)
 
 # ────────────────────────────────────────────────────────────────────────
@@ -638,6 +647,7 @@ def main():
         "config_file": args.config,
         "input": resolved_input,
         "input_type": input_type,
+        "album": args.album if args.album else "(all)",
         "output_folder": config.get("output_folder"),
         "log_file": effective_log_file if effective_log_file else "STDOUT",
         "log_level": "DEBUG" if args.debug else "INFO",
@@ -695,8 +705,10 @@ def main():
         
         # Show what would be processed
         if args.batch:
-            image_files = get_image_files(config["input_folder"])
-            logInfo(f"        📂 Would process {len(image_files)} images from: {config['input_folder']}", console_only=True)
+            image_files = get_image_files(resolved_input, args.album)
+            if args.album:
+                logInfo(f"        🎯 Album filter: {args.album}", console_only=True)
+            logInfo(f"        📂 Would process {len(image_files)} images from: {resolved_input}", console_only=True)
             if args.verbose:
                 for i, img in enumerate(image_files[:5], 1):  # Show first 5
                     logInfo(f"            {i}. {os.path.basename(img)}", console_only=True)
@@ -731,12 +743,18 @@ def main():
 
     # Preflight batch discovery before loading model weights.
     if args.batch:
-        preflight_image_paths = get_image_files(resolved_input)
+        preflight_image_paths = get_image_files(resolved_input, args.album)
         if not preflight_image_paths:
-            logError(f"No images found in batch input folder: {resolved_input}")
-            logError("Run preprocessing first or pass --input-folder with a populated image directory.")
+            if args.album:
+                logError(f"No images found for album '{args.album}' under batch input folder: {resolved_input}")
+            else:
+                logError(f"No images found in batch input folder: {resolved_input}")
+            logError("Run preprocessing first, verify --album, or pass --input-folder with a populated image directory.")
             sys.exit(1)
-        logInfo(f"📦 Batch preflight: found {len(preflight_image_paths)} images in {resolved_input}")
+        if args.album:
+            logInfo(f"📦 Batch preflight: found {len(preflight_image_paths)} images in {resolved_input} (album={args.album})")
+        else:
+            logInfo(f"📦 Batch preflight: found {len(preflight_image_paths)} images in {resolved_input}")
 
     if args.debug:
         logDebug(f"PyTorch version: {torch.__version__}")
@@ -874,9 +892,12 @@ def main():
     input_base_folder = None
     if args.batch:
         input_base_folder = resolved_input  # Use the resolved input (respects --input override)
-        image_paths = preflight_image_paths if preflight_image_paths is not None else get_image_files(resolved_input)
+        image_paths = preflight_image_paths if preflight_image_paths is not None else get_image_files(resolved_input, args.album)
         if args.debug:
-            logDebug(f"Found {len(image_paths)} images in {input_base_folder} (including subfolders)")
+            if args.album:
+                logDebug(f"Found {len(image_paths)} images in {input_base_folder}/{args.album} (including subfolders)")
+            else:
+                logDebug(f"Found {len(image_paths)} images in {input_base_folder} (including subfolders)")
     elif args.file is not None:
         image_paths = [resolved_input]  # Use the resolved path from earlier logic
     else:

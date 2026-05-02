@@ -253,7 +253,7 @@
     "batch_mode": true,
     "preserve_metadata": true,
     "_loras_to_process_comment": "Special entries: 'NoLoRA' copies scaled images without style transfer (pass-through mode). Include as first entry to generate unmodified baseline images alongside stylized versions.",
-    "loras_to_process": ["NoLoRA"],
+    "loras_to_process": ["Afremov", "Gorillaz"],
     "_Available_loras": [
       "PencilDrawing",
       "FractalGeometry",

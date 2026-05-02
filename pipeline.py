@@ -258,6 +258,33 @@ class PipelineRunner:
             photo_index.setdefault(image_path.name, str(image_path))
         return photo_index
 
+    def _get_filtered_images_by_album(self, base_dir: Path) -> List[Path]:
+        """
+        Find images in base_dir, filtered by album_filter if specified.
+        
+        Args:
+            base_dir: Root directory (typically albums folder)
+            
+        Returns:
+            List of image file paths. If album_filter is set, only images from that album.
+            Empty list if album directory not found or no images match.
+        """
+        if not base_dir.exists():
+            return []
+        
+        if self.album_filter:
+            # Specific album requested
+            album_path = base_dir / self.album_filter
+            if not album_path.exists() or not album_path.is_dir():
+                logWarn(f"⚠️  Album folder not found: {self.album_filter}")
+                logWarn(f"   Expected: {album_path}")
+                return []
+            logInfo(f"🎯 Album filter active: {self.album_filter}")
+            return find_images_in_directory(album_path)
+        else:
+            # All images in base_dir
+            return find_images_in_directory(base_dir)
+
     def _state_short(self, state: str, country_code: str) -> str:
         """Abbreviate common provinces/states for compact watermark lines."""
         if not state:
@@ -475,7 +502,8 @@ class PipelineRunner:
         raw_input_path = Path(self.paths.get('raw_input'))
         
         # Process all images in input folder using consistent extension finding
-        image_files = find_images_in_directory(raw_input_path)
+        # Filtered by album if --album specified
+        image_files = self._get_filtered_images_by_album(raw_input_path)
         
         new_count = 0
         skipped_count = 0
@@ -663,7 +691,7 @@ class PipelineRunner:
             logWarn(f"⚠️  Input path does not exist: {raw_input_path} - skipping preprocessing")
             return
         
-        image_files = find_images_in_directory(input_path)
+        image_files = self._get_filtered_images_by_album(input_path)
         if len(image_files) == 0:
             logWarn(f"⚠️  No images found in {raw_input_path} - skipping preprocessing")
             return
@@ -768,7 +796,7 @@ class PipelineRunner:
             logWarn(f"⚠️  Raw input path not found: {input_path}")
             return
 
-        image_files = find_images_in_directory(input_path)
+        image_files = self._get_filtered_images_by_album(input_path)
         if not image_files:
             logWarn(f"⚠️  No images found in {input_path} - skipping llm_image_analysis")
             return
@@ -926,7 +954,17 @@ class PipelineRunner:
         logInfo("🎨 Stage 6: Applying LoRA style filters")
         
         lora_config = self.config.get('lora_processing', {})
-        loras_to_process = lora_config.get('loras_to_process', [])
+        raw_loras = lora_config.get('loras_to_process', [])
+
+        # Be forgiving of accidental punctuation or spacing in config values.
+        loras_to_process = []
+        for raw_name in raw_loras:
+            normalized = str(raw_name).strip().strip(',;')
+            if not normalized:
+                continue
+            if normalized != str(raw_name).strip():
+                logWarn(f"⚠️  Normalized LoRA name '{raw_name}' -> '{normalized}'")
+            loras_to_process.append(normalized)
         
         if not loras_to_process:
             logWarn("⚠️  No LoRAs specified in config. Add 'loras_to_process' array to lora_processing config.")
@@ -944,6 +982,8 @@ class PipelineRunner:
         logInfo(f"📁 Input: {input_rel}")
         logInfo(f"📂 Output: {output_rel}")
         logInfo(f"🎨 Processing {len(loras_to_process)} LoRA styles: {', '.join(loras_to_process)}")
+        if self.album_filter:
+            logInfo(f"🎯 Album filter active: {self.album_filter}")
 
         # Fail fast if LoRA input folder is empty to avoid expensive model load with no work.
         input_path_obj = Path(input_folder)
@@ -951,7 +991,15 @@ class PipelineRunner:
             logError(f"❌ LoRA input folder not found: {input_folder}")
             raise RuntimeError(f"LoRA input folder missing: {input_folder}")
 
-        input_images = find_images_in_directory(input_path_obj)
+        if self.album_filter:
+            album_input_path = input_path_obj / self.album_filter
+            if not album_input_path.exists() or not album_input_path.is_dir():
+                logError(f"❌ Album folder not found under LoRA input: {self.album_filter}")
+                logError(f"   Expected: {album_input_path}")
+                raise RuntimeError(f"LoRA processing aborted: album folder missing ({self.album_filter})")
+            input_images = find_images_in_directory(album_input_path)
+        else:
+            input_images = find_images_in_directory(input_path_obj)
         logInfo(f"🧮 LoRA input images discovered: {len(input_images)}")
         if not input_images:
             # IMPORTANT: Never fall back to raw_input/albums for LoRA processing.
@@ -1002,6 +1050,10 @@ class PipelineRunner:
                 '--input-folder', input_folder,
                 '--output-folder', output_folder
             ]
+
+            # Pass album filter to lora_transformer if specified
+            if self.album_filter:
+                cmd.extend(['--album', self.album_filter])
 
             # Force subprocess logs into the same per-run pipeline log.
             run_log_file = os.getenv('SKICYCLERUN_RUN_LOG_FILE')
@@ -1068,7 +1120,7 @@ class PipelineRunner:
         skipped_no_metadata = 0
         failed = 0
         
-        lora_images = find_images_in_directory(lora_folder)
+        lora_images = self._get_filtered_images_by_album(lora_folder)
         geocode_cache = self._load_geocode_cache()
 
         if not geocode_cache:
@@ -1902,7 +1954,7 @@ if __name__ == "__main__":
     parser.add_argument("--sweep-pulse-sec", type=int, default=5, help="Heartbeat interval in seconds for geocode sweep progress")
     parser.add_argument("--force-watermark", action="store_true", help="Force post-LoRA watermarking to re-process even if already watermarked")
     parser.add_argument("--force-llm-reanalysis", action="store_true", help="Force llm_image_analysis to overwrite existing candidate data")
-    parser.add_argument("--album", help="Limit run to a specific album folder name (currently used by s3_deployment)")
+    parser.add_argument("--album", help="Limit run to a specific album folder name (applies to all stages when specified)")
     parser.add_argument("--verbose", action="store_true", help="Enable verbose output to terminal")
     parser.add_argument("--debug", action="store_true", help="Enable debug mode - saves LLM prompts to llm_prompt_request.json")
     parser.add_argument("--debug-prompt", action="store_true", help="Save populated LLM prompts to logs/ folder with image names")
