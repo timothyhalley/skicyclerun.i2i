@@ -106,6 +106,8 @@ class PipelineRunner:
         sweep_pulse_sec: int = 5,
         force_watermark: bool = False,
         force_llm_reanalysis: bool = False,
+        travel_log_llm: bool = False,
+        travel_log_map: bool = False,
         debug: bool = False,
         debug_prompt: bool = False,
     ):
@@ -129,6 +131,8 @@ class PipelineRunner:
         self.sweep_pulse_sec = max(1, int(sweep_pulse_sec))
         self.force_watermark = force_watermark
         self.force_llm_reanalysis = force_llm_reanalysis
+        self.travel_log_llm = bool(travel_log_llm)
+        self.travel_log_map = bool(travel_log_map)
         self.debug = debug
         self.debug_prompt = debug_prompt
         
@@ -1631,6 +1635,50 @@ class PipelineRunner:
             logError(f"❌ S3 deployment failed: {e}")
             import traceback
             logError(traceback.format_exc())
+
+    def run_travel_log_generation_stage(self):
+        """Generate chronological travel-log RAG JSON from master + geocode cache."""
+        logInfo("🧭 Stage: Generating travel log RAG JSON")
+        try:
+            from core.travel_log_generator import (
+                _load_json,
+                generate_travel_map_prompt_markdown,
+                generate_travel_log_from_config,
+                generate_travel_story_markdown,
+            )
+
+            cfg = resolve_config_placeholders(_load_json(Path(self.config_path)))
+
+            output_path = generate_travel_log_from_config(
+                config_path=self.config_path,
+                album=self.album_filter,
+            )
+            logInfo(f"✅ Travel log generated: {output_path}")
+
+            rag_payload = _load_json(output_path)
+            output_dir = Path(output_path).parent
+            output_album = self.album_filter or "all_albums"
+
+            if self.travel_log_map:
+                map_prompt_path = generate_travel_map_prompt_markdown(
+                    config=cfg,
+                    rag_payload=rag_payload,
+                    output_dir=output_dir,
+                    output_album=output_album,
+                )
+                logInfo(f"✅ Travel map prompt generated: {map_prompt_path}")
+
+            if self.travel_log_llm:
+                story_path = generate_travel_story_markdown(
+                    config=cfg,
+                    rag_payload=rag_payload,
+                    output_dir=output_dir,
+                    output_album=output_album,
+                )
+                logInfo(f"✅ Travel story generated: {story_path}")
+        except Exception as exc:
+            logError(f"❌ Travel log generation failed: {exc}")
+            raise
     
     def run_pipeline(self, stages: List[str] = None):
         """Run the full pipeline or specific stages"""
@@ -1661,6 +1709,7 @@ class PipelineRunner:
             'preprocessing': self.run_preprocessing_stage,
             'lora_processing': self.run_lora_processing_stage,
             'post_lora_watermarking': self.run_post_lora_watermarking_stage,
+            'travel_log_generation': self.run_travel_log_generation_stage,
             's3_deployment': self.run_s3_deployment_stage
         }
         
@@ -1692,6 +1741,7 @@ class PipelineRunner:
             'preprocessing',
             'lora_processing',
             'post_lora_watermarking',
+            'travel_log_generation',
             's3_deployment'
         ]
         
@@ -1719,6 +1769,7 @@ class PipelineRunner:
                 'preprocessing': '   Resize and optimize images for LoRA processing',
                 'lora_processing': '   Apply artistic style filters with FLUX LoRA models',
                 'post_lora_watermarking': '   Add watermarks to LoRA-processed images',
+                'travel_log_generation': '   Build chronological travel-log RAG JSON from master/geocode metadata',
                 's3_deployment': '   Deploy final images to AWS S3'
             }
             
@@ -1933,6 +1984,7 @@ if __name__ == "__main__":
         "  preprocessing          Resize and optimize source images\n"
         "  lora_processing        Generate style variants with LoRA\n"
         "  post_lora_watermarking Build/apply final LINE1/LINE2 watermarks\n"
+        "  travel_log_generation  Build travel-log RAG JSON for Ollama prompting\n"
         "  s3_deployment          Upload final outputs to AWS S3"
     )
     
@@ -1955,6 +2007,8 @@ if __name__ == "__main__":
     parser.add_argument("--force-watermark", action="store_true", help="Force post-LoRA watermarking to re-process even if already watermarked")
     parser.add_argument("--force-llm-reanalysis", action="store_true", help="Force llm_image_analysis to overwrite existing candidate data")
     parser.add_argument("--album", help="Limit run to a specific album folder name (applies to all stages when specified)")
+    parser.add_argument("--llm", "-llm", action="store_true", help="For travel_log_generation, also generate Markdown story via Ollama")
+    parser.add_argument("--map", action="store_true", help="For travel_log_generation, also generate a dedicated map prompt Markdown for cloud image APIs")
     parser.add_argument("--verbose", action="store_true", help="Enable verbose output to terminal")
     parser.add_argument("--debug", action="store_true", help="Enable debug mode - saves LLM prompts to llm_prompt_request.json")
     parser.add_argument("--debug-prompt", action="store_true", help="Save populated LLM prompts to logs/ folder with image names")
@@ -2097,6 +2151,8 @@ if __name__ == "__main__":
         sweep_pulse_sec=args.sweep_pulse_sec,
         force_watermark=args.force_watermark,
         force_llm_reanalysis=args.force_llm_reanalysis,
+        travel_log_llm=args.llm,
+        travel_log_map=args.map,
         debug=args.debug,
         debug_prompt=args.debug_prompt,
     )

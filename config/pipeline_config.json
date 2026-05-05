@@ -290,6 +290,70 @@
     "line2_max_words": 14,
     "_comment": "Optional stage. Generates LLM_Watermark_Line1 and LLM_Watermark_Line2 for each geocode_cache entry."
   },
+  "travel_log_generation": {
+    "rag_output_name": "{album}-LLMRAG-data.json"
+  },
+  "travel_story_generation": {
+    "enabled": true,
+    "prompt_template": "config/travel_story_prompt_template.md",
+    "output_name": "{album}-Adventum-{model}.md",
+    "prepend_album_title": false,
+    "save_resolved_prompt": true,
+    "resolved_prompt_name": "{album}-Adventum-prompt.md",
+    "prompt_max_chars": 64000,
+    "prompt_max_entries": 160,
+    "prompt_min_entries": 24,
+    "prompt_max_photos_per_entry": 5,
+    "prompt_max_pois_per_entry": 3,
+    "timeout_seconds": 180,
+    "temperature": 0.85,
+    "top_p": 0.95,
+    "max_tokens": 2600,
+    "persona": "Award-winning travel essayist with a cinematic, sensory writing voice",
+    "style_guide": "Write with lyrical momentum, precise imagery, and emotional texture while staying fact-grounded. Favor memorable phrasing over bland summary.",
+    "format_guide": "Output valid Markdown with one compelling title, a vivid opening, sectioned narrative progression by place/time, emoji-led vignettes, highlights, and a resonant closing reflection.",
+    "positive_guidance": [
+      "Prioritize factual grounding from the provided RAG metadata",
+      "Use a coherent timeline and connect moments into a story arc",
+      "Blend place, activity, atmosphere, and contrast in evocative prose",
+      "Use specific sensory details rooted in locations and POIs",
+      "Craft section headings that feel editorial and destination-specific",
+      "Use tasteful emojis for section headers and highlight bullets"
+    ],
+    "negative_guidance": [
+      "Do not invent facts, locations, dates, or events",
+      "Avoid generic fluff, filler adjectives, and repetitive wording",
+      "Do not contradict RAG metadata",
+      "Avoid first-person claims unless explicitly present in metadata",
+      "Do not output JSON or code blocks",
+      "Do not write like a dry itinerary or technical report"
+    ]
+  },
+  "travel_map_generation": {
+    "enabled": true,
+    "prompt_template": "config/travel_map_prompt_template.md",
+    "target_model": "midjourney",
+    "resolve_with_local_llm": true,
+    "strict_sync": false,
+    "save_request_prompt": true,
+    "request_output_name": "{album}-navigium-request.md",
+    "prompt_output_name": "{album}-navigium-prompt.md",
+    "label_policy": "cities_and_pois",
+    "image_width": 800,
+    "image_height": 800,
+    "timeout_seconds": 180,
+    "temperature": 0.30,
+    "top_p": 0.90,
+    "max_tokens": 2600,
+    "artist_style": "Guillaume Kurkdjian",
+    "artist_style_list": "Ângelo Fernandes, To Binh Binh, Nguyen Thanh, Guillaume Kurkdjian",
+    "artist_style_briefs": {
+      "Guillaume Kurkdjian": "Clean isometric perspective, warm sunlit color palette, soft gradients, playful geometric precision, miniature icon treatment for POIs, crisp linework, balanced composition with foreground to midground to background depth.",
+      "Ângelo Fernandes": "Vibrant flat illustration, bold color blocks, geometric stylization, graphic poster aesthetic, strong silhouettes, minimal shading.",
+      "To Binh Binh": "Delicate ink linework, layered texture, earthy tones, fine hatching detail, architectural intimacy, hand-drawn feel.",
+      "Nguyen Thanh": "Painterly digital rendering, rich atmospheric light, loose gestural strokes, luminous color harmony, impressionistic depth."
+    }
+  },
   "s3_deployment": {
     "enabled": true,
     "bucket_name": "skicyclerun.lib",
