@@ -1982,28 +1982,52 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="SkiCycleRun Photo Processing Pipeline",
         formatter_class=argparse.RawTextHelpFormatter,
+        usage="%(prog)s [--stages STAGE [STAGE ...]] [GLOBAL_OPTIONS] [STAGE_OPTIONS]",
+        epilog=(
+            "Stage-specific option routing:\n"
+            "  metadata_extraction: --cache-only-geocode, --sweep-*\n"
+            "  llm_image_analysis: --force-llm-reanalysis, --sweep-path-contains, --sweep-limit\n"
+            "  post_lora_watermarking: --force-watermark\n"
+            "  travel_log_generation: --llm, --map\n"
+            "  cleanup: --force-clean\n\n"
+            "Global options (apply regardless of stage selection):\n"
+            "  --config, --stages, --album, --check-config, --yes/-y, --verbose, --debug, --debug-prompt"
+        ),
     )
-    parser.add_argument("--config", default="config/pipeline_config.json", help="Pipeline config file")
-    parser.add_argument("-stages", "--stages", nargs='+', help=stages_help)
-    parser.add_argument("--cache-only-geocode", action="store_true", help="Use geocoding cache only (no network calls)")
-    parser.add_argument("--check-config", action="store_true", help="Validate config paths, report resolution details, then exit")
-    parser.add_argument("--yes", action="store_true", help="Skip interactive confirmation prompt after config check")
-    # Geocode sweep filters
-    parser.add_argument("--sweep-path-contains", help="Only sweep entries whose path contains this substring")
-    parser.add_argument("--sweep-limit", type=int, help="Limit number of entries processed in geocode sweep")
-    parser.add_argument("--sweep-only-missing", action="store_true", help="Process only entries missing location/heading/POIs")
-    parser.add_argument("--sweep-skip-poi", action="store_true", help="Skip POI fetching during sweep")
-    parser.add_argument("--sweep-skip-heading", action="store_true", help="Skip EXIF heading extraction during sweep")
-    parser.add_argument("--sweep-pulse-sec", type=int, default=5, help="Heartbeat interval in seconds for geocode sweep progress")
-    parser.add_argument("--force-watermark", action="store_true", help="Force post-LoRA watermarking to re-process even if already watermarked")
-    parser.add_argument("--force-llm-reanalysis", action="store_true", help="Force llm_image_analysis to overwrite existing candidate data")
-    parser.add_argument("--album", help="Limit run to a specific album folder name (applies to all stages when specified)")
-    parser.add_argument("--llm", "-llm", action="store_true", help="For travel_log_generation, also generate Markdown story via Ollama")
-    parser.add_argument("--map", action="store_true", help="For travel_log_generation, also generate a dedicated map prompt Markdown for cloud image APIs")
-    parser.add_argument("--verbose", action="store_true", help="Enable verbose output to terminal")
-    parser.add_argument("--debug", action="store_true", help="Enable debug mode - saves LLM prompts to llm_prompt_request.json")
-    parser.add_argument("--debug-prompt", action="store_true", help="Save populated LLM prompts to logs/ folder with image names")
-    parser.add_argument("--force-clean", action="store_true", help="Force cleanup stage to delete folders even without export stage")
+
+    stage_group = parser.add_argument_group("Stage Selection")
+    stage_group.add_argument("-stages", "--stages", nargs='+', help=stages_help)
+
+    global_group = parser.add_argument_group("Global Options")
+    global_group.add_argument("--config", default="config/pipeline_config.json", help="Pipeline config file")
+    global_group.add_argument("--album", help="Limit run to a specific album folder name (applies to all stages when specified)")
+    global_group.add_argument("--check-config", action="store_true", help="Validate config paths, report resolution details, then exit")
+    global_group.add_argument("--yes", "-y", action="store_true", help="Skip interactive confirmation prompt after config check")
+    global_group.add_argument("--verbose", action="store_true", help="Enable verbose output to terminal")
+    global_group.add_argument("--debug", action="store_true", help="Enable debug mode - saves LLM prompts to llm_prompt_request.json")
+    global_group.add_argument("--debug-prompt", action="store_true", help="Save populated LLM prompts to logs/ folder with image names")
+
+    metadata_group = parser.add_argument_group("metadata_extraction Options")
+    metadata_group.add_argument("--cache-only-geocode", action="store_true", help="Use geocoding cache only (no network calls)")
+    metadata_group.add_argument("--sweep-path-contains", help="Only sweep entries whose path contains this substring")
+    metadata_group.add_argument("--sweep-limit", type=int, help="Limit number of entries processed in geocode sweep")
+    metadata_group.add_argument("--sweep-only-missing", action="store_true", help="Process only entries missing location/heading/POIs")
+    metadata_group.add_argument("--sweep-skip-poi", action="store_true", help="Skip POI fetching during sweep")
+    metadata_group.add_argument("--sweep-skip-heading", action="store_true", help="Skip EXIF heading extraction during sweep")
+    metadata_group.add_argument("--sweep-pulse-sec", type=int, default=5, help="Heartbeat interval in seconds for geocode sweep progress")
+
+    llm_img_group = parser.add_argument_group("llm_image_analysis Options")
+    llm_img_group.add_argument("--force-llm-reanalysis", action="store_true", help="Force llm_image_analysis to overwrite existing candidate data")
+
+    post_wm_group = parser.add_argument_group("post_lora_watermarking Options")
+    post_wm_group.add_argument("--force-watermark", action="store_true", help="Force post-LoRA watermarking to re-process even if already watermarked")
+
+    travel_group = parser.add_argument_group("travel_log_generation Options")
+    travel_group.add_argument("--llm", "-llm", action="store_true", help="Also generate Markdown story via Ollama")
+    travel_group.add_argument("--map", action="store_true", help="Also generate a dedicated map prompt Markdown for cloud image APIs")
+
+    cleanup_group = parser.add_argument_group("cleanup Options")
+    cleanup_group.add_argument("--force-clean", action="store_true", help="Force cleanup stage to delete folders even without export stage")
     
     args = parser.parse_args()
     
@@ -2152,6 +2176,64 @@ if __name__ == "__main__":
     stages_to_run = args.stages
     if stages_to_run and len(stages_to_run) == 1 and ',' in stages_to_run[0]:
         stages_to_run = [s.strip() for s in stages_to_run[0].split(',')]
+
+    requested_stages = set(stages_to_run or runner.stages)
+
+    logInfo("\n🧭 CLI OPTION ROUTING")
+    if args.album:
+        logInfo(f"        ✅ --album active for this run: {args.album}")
+    else:
+        logInfo("        ℹ️  --album not set (all albums)")
+
+    stage_flag_violations = []
+
+    def _requires_stage(flag_name: str, required_stages: set[str], value_is_set: bool):
+        if value_is_set and not (requested_stages & required_stages):
+            stage_flag_violations.append(
+                f"{flag_name} requires one of: {', '.join(sorted(required_stages))}"
+            )
+
+    _requires_stage("--force-watermark", {"post_lora_watermarking"}, bool(args.force_watermark))
+    _requires_stage("--force-llm-reanalysis", {"llm_image_analysis"}, bool(args.force_llm_reanalysis))
+    _requires_stage("--llm", {"travel_log_generation"}, bool(args.llm))
+    _requires_stage("--map", {"travel_log_generation"}, bool(args.map))
+    _requires_stage("--force-clean", {"cleanup"}, bool(args.force_clean))
+    _requires_stage("--cache-only-geocode", {"metadata_extraction"}, bool(args.cache_only_geocode))
+    _requires_stage("--sweep-path-contains", {"metadata_extraction", "llm_image_analysis"}, args.sweep_path_contains is not None)
+    _requires_stage("--sweep-limit", {"metadata_extraction", "llm_image_analysis"}, args.sweep_limit is not None)
+    _requires_stage("--sweep-only-missing", {"metadata_extraction"}, bool(args.sweep_only_missing))
+    _requires_stage("--sweep-skip-poi", {"metadata_extraction"}, bool(args.sweep_skip_poi))
+    _requires_stage("--sweep-skip-heading", {"metadata_extraction"}, bool(args.sweep_skip_heading))
+
+    if stage_flag_violations:
+        logError("❌ Invalid stage-specific option usage:")
+        for violation in stage_flag_violations:
+            logError(f"   - {violation}")
+        logError("   Fix stage selection or remove incompatible options.")
+        sys.exit(2)
+
+    if args.force_watermark:
+        logInfo("        ✅ --force-watermark applies to post_lora_watermarking")
+    if args.force_llm_reanalysis:
+        logInfo("        ✅ --force-llm-reanalysis applies to llm_image_analysis")
+    if args.llm:
+        logInfo("        ✅ --llm applies to travel_log_generation")
+    if args.map:
+        logInfo("        ✅ --map applies to travel_log_generation")
+    if args.force_clean:
+        logInfo("        ✅ --force-clean applies to cleanup")
+    if args.cache_only_geocode:
+        logInfo("        ✅ --cache-only-geocode applies to metadata_extraction")
+    if args.sweep_path_contains is not None:
+        logInfo("        ✅ --sweep-path-contains applies to metadata_extraction/llm_image_analysis")
+    if args.sweep_limit is not None:
+        logInfo("        ✅ --sweep-limit applies to metadata_extraction/llm_image_analysis")
+    if args.sweep_only_missing:
+        logInfo("        ✅ --sweep-only-missing applies to metadata_extraction")
+    if args.sweep_skip_poi:
+        logInfo("        ✅ --sweep-skip-poi applies to metadata_extraction")
+    if args.sweep_skip_heading:
+        logInfo("        ✅ --sweep-skip-heading applies to metadata_extraction")
     
     if args.check_config:
         logInfo("\n🧪 CONFIG CHECK MODE")
@@ -2177,5 +2259,8 @@ if __name__ == "__main__":
             sys.exit(0)
     else:
         logInfo("✅ Proceeding without confirmation (--yes supplied).")
+
+    # Forward one-off CLI behavior flags that are consumed inside stage wrappers.
+    runner._force_clean = bool(args.force_clean)
 
     runner.run_pipeline(stages_to_run)
