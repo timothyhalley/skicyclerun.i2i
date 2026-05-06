@@ -246,9 +246,12 @@ class PipelineRunner:
         cache_path = metadata_dir / 'geocode_cache.json'
         try:
             cache_path.parent.mkdir(parents=True, exist_ok=True)
+            compact_cache = GeoExtractor(
+                config={"metadata_extraction": {"providers": {"geocoding": {"cache": {"enabled": False}}}}}
+            )._compact_cache_schema(geocode_cache if isinstance(geocode_cache, dict) else {})
             tmp_path = cache_path.with_suffix('.tmp')
             with open(tmp_path, 'w', encoding='utf-8') as f:
-                json.dump(geocode_cache, f, indent=2, ensure_ascii=False)
+                json.dump(compact_cache, f, indent=2, ensure_ascii=False)
             tmp_path.replace(cache_path)
             return True
         except Exception as exc:
@@ -481,19 +484,22 @@ class PipelineRunner:
         # This ensures master.json only contains files from pipeline/albums
         if self.master_store:
             albums_path = Path(self.paths.get('raw_input'))
-            stale_count = 0
-            for path_key in list(self.master_store.data.keys()):
-                # Only check original files (not derivatives)
-                entry = self.master_store.data[path_key]
-                if entry.get('source_path'):
-                    continue
-                # Check if file exists in albums folder
-                if not Path(path_key).exists():
-                    del self.master_store.data[path_key]
-                    stale_count += 1
-            if stale_count > 0:
+            prune_stats = self.master_store.prune_to_minimal(
+                source_root=str(albums_path),
+                drop_missing_files=True,
+            )
+            if (
+                prune_stats.get('removed_non_source', 0) > 0
+                or prune_stats.get('removed_missing', 0) > 0
+                or prune_stats.get('pruned_entries', 0) > 0
+            ):
                 self.master_store.save()
-                logInfo(f"🧹 Removed {stale_count} stale entries (files not in albums folder)")
+                logInfo(
+                    "🧹 Master cleanup: "
+                    f"removed_non_source={prune_stats.get('removed_non_source', 0)}, "
+                    f"removed_missing={prune_stats.get('removed_missing', 0)}, "
+                    f"pruned_entries={prune_stats.get('pruned_entries', 0)}"
+                )
         
         # Legacy catalog retired; skipping reads.
         
@@ -1208,9 +1214,10 @@ class PipelineRunner:
             
             try:
                 # Load LoRA generation metadata from master.json.
-                # lora_transformer.py saves it as a flat dot-key: "lora_generations.{style}"
-                # We also check the nested form for forward compat.
+                # Prefer consolidated per-style metadata from watermarked_outputs.
+                # Fall back to legacy lora_generations.* keys for backward compatibility.
                 lora_generation_params = (
+                    source_metadata.get('watermarked_outputs', {}).get(style_name) or
                     source_metadata.get(f'lora_generations.{style_name}') or
                     source_metadata.get('lora_generations', {}).get(style_name) or
                     {}
@@ -1323,31 +1330,28 @@ class PipelineRunner:
                         copyright_metadata
                     )
                 
-                # Record watermark application with full LoRA generation metadata
-                font_cfg = watermark_config.get('font', {})
+                # Record output mapping and geocode reference only.
+                # Watermark lines are canonicalized in geocode_cache.json.
                 applied_at = utc_now_iso_z()
-                watermark_section = {
-                    'line1': line1_text,
-                    'line2': line2_text,
-                    'watermark_sources': {
-                        'line1': 'core.poi_watermark_engine.build_two_line_watermark',
-                        'line2': 'core.poi_watermark_engine.format_line2 + copyright formatter'
-                    },
-                    'layout': watermark_config.get('layout', 'two_line'),
-                    'font_size': font_cfg.get('size'),
-                    'position': watermark_config.get('position'),
+                watermark_ref = {
+                    'cache_key': cache_key,
                     'updated_at': applied_at
                 }
                 watermarked_output_record = {
-                    'style': style_name,
                     'lora_path': str(lora_path),
                     'output_path': str(output_file),
                     'applied_at': applied_at
                 }
+                if lora_generation_params.get('seed') is not None:
+                    watermarked_output_record['seed'] = lora_generation_params.get('seed')
+                if lora_generation_params.get('generated_at'):
+                    watermarked_output_record['generated_at'] = lora_generation_params.get('generated_at')
+                if lora_generation_params.get('output_name'):
+                    watermarked_output_record['output_name'] = lora_generation_params.get('output_name')
                 
-                # Update the source entry with watermark info
+                # Update source entry with geocode pointer and output records.
                 if source_path:
-                    self.master_store.update_section(source_path, 'watermark', watermark_section, stage='post_lora_watermarking')
+                    self.master_store.update_section(source_path, 'watermark_ref', watermark_ref, stage='post_lora_watermarking')
                     self.master_store.update_section(
                         source_path,
                         'watermarked_outputs',
@@ -1545,19 +1549,6 @@ class PipelineRunner:
                         
                         uploaded_files += 1
 
-                        # Update master store with deployment info
-                        if self.master_store:
-                            deploy = {
-                                "bucket": bucket_name,
-                                "key": s3_key,
-                                "region": s3_config.get('region'),
-                                "uploaded_at": utc_now_iso_z(),
-                                "cache_control": extra_args.get('CacheControl'),
-                                "content_type": extra_args.get('ContentType'),
-                                "storage_class": extra_args.get('StorageClass'),
-                            }
-                            self.master_store.update_section(str(image_file), 'deployment', deploy, stage='s3_deployment')
-                        
                         if uploaded_files % 10 == 0:
                             logInfo(f"  ✓ Uploaded {uploaded_files} new | {total_files} total files processed...")
                         

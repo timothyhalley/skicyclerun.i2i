@@ -27,9 +27,14 @@ import logging
 import os
 import sys
 import time
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 import requests
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from core.geo_extractor import GeoExtractor
 
 WIKI_REQUEST_INTERVAL_SEC: float = 1.0
 """Minimum delay (seconds) between Wikipedia API calls."""
@@ -64,6 +69,15 @@ def _wiki_headers() -> Dict[str, str]:
         "User-Agent": user_agent,
         "Accept": "application/json",
     }
+
+
+def _write_updates(path: str, data: Dict[str, Any]) -> None:
+    if Path(path).name == "geocode_cache.json" and isinstance(data, dict):
+        data = GeoExtractor(
+            config={"metadata_extraction": {"providers": {"geocoding": {"cache": {"enabled": False}}}}}
+        )._compact_cache_schema(data)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
 
 def _rate_limited_get(url: str, *, timeout: float = 10.0) -> requests.Response:
     """Perform a GET request while enforcing the global rate limit."""
@@ -423,8 +437,7 @@ def main() -> None:
 
     if updates:
         logging.info("💾 Writing updated metadata with %d new summaries", updates)
-        with open(args.master_store, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
+        _write_updates(args.master_store, data)
     else:
         logging.info("🟰 No updates written; existing file unchanged")
 

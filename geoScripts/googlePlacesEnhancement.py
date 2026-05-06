@@ -26,6 +26,10 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import requests
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from core.geo_extractor import GeoExtractor
+
 PLACES_API_KEY_ENV: str = "GOOGLE_MAPS_API_KEY"
 PLACES_SEARCH_URL: str = "https://places.googleapis.com/v1/places:searchNearby"
 PLACES_FIELD_MASK: str = (
@@ -359,6 +363,10 @@ def _landmark_summary_line(position: int, landmark: Dict[str, Any]) -> str:
 
 
 def _write_updates(path: str, data: Dict[str, Any]) -> None:
+    if Path(path).name == "geocode_cache.json" and isinstance(data, dict):
+        data = GeoExtractor(
+            config={"metadata_extraction": {"providers": {"geocoding": {"cache": {"enabled": False}}}}}
+        )._compact_cache_schema(data)
     with open(path, "w", encoding="utf-8") as handle:
         json.dump(data, handle, indent=2, ensure_ascii=False)
 

@@ -298,7 +298,178 @@ class GeoExtractor:
 
             normalized[key] = e
 
-        return normalized
+        return self._compact_cache_schema(normalized)
+
+    def _compact_cache_namedetails(self, namedetails: Any) -> Dict[str, Any]:
+        if not isinstance(namedetails, dict):
+            return {}
+        keep = ['name', 'name:en', '_place_name', '_place_name:en']
+        compact = {}
+        for key in keep:
+            val = namedetails.get(key)
+            if val not in (None, ''):
+                compact[key] = val
+        return compact
+
+    def _compact_cache_extratags(self, extratags: Any) -> Dict[str, Any]:
+        if not isinstance(extratags, dict):
+            return {}
+        keep = ['wikidata', 'wikipedia', 'brand', 'operator']
+        compact = {}
+        for key in keep:
+            val = extratags.get(key)
+            if val not in (None, ''):
+                compact[key] = val
+        return compact
+
+    def _compact_cache_nearby_pois(self, nearby_pois: Any) -> list:
+        if not isinstance(nearby_pois, list):
+            return []
+
+        compact_list = []
+        seen_index: Dict[Tuple[str, str, Optional[int]], int] = {}
+        for poi in nearby_pois:
+            if not isinstance(poi, dict):
+                continue
+            compact = {
+                'name': poi.get('name'),
+                'category': poi.get('category') or poi.get('type'),
+                'type': poi.get('type') or poi.get('category'),
+                'distance_m': poi.get('distance_m'),
+                'bearing_deg': poi.get('bearing_deg'),
+                'bearing_cardinal': poi.get('bearing_cardinal'),
+            }
+            tags = poi.get('tags') if isinstance(poi.get('tags'), dict) else {}
+            wikidata = poi.get('wikidata') or tags.get('wikidata')
+            if wikidata:
+                compact['wikidata'] = wikidata
+            compact = {k: v for k, v in compact.items() if v not in (None, '')}
+            if compact.get('name'):
+                sig = (
+                    str(compact.get('name', '')).strip().lower(),
+                    str(compact.get('type') or compact.get('category') or '').strip().lower(),
+                    int(round(float(compact['distance_m']))) if compact.get('distance_m') is not None else None,
+                )
+                existing_idx = seen_index.get(sig)
+                if existing_idx is None:
+                    seen_index[sig] = len(compact_list)
+                    compact_list.append(compact)
+                else:
+                    existing = compact_list[existing_idx]
+                    # Keep whichever duplicate contains more populated fields.
+                    if len(compact) > len(existing):
+                        compact_list[existing_idx] = compact
+
+        return compact_list
+
+    def _compact_cache_fallback_context(self, fallback_context: Any) -> Dict[str, Any]:
+        if not isinstance(fallback_context, dict):
+            return {}
+        keep = ['anchor', 'summary', 'type', 'formatted', 'display_name', 'name']
+        compact = {}
+        for key in keep:
+            val = fallback_context.get(key)
+            if val not in (None, ''):
+                compact[key] = val
+        return compact
+
+    def _compact_cache_poi_search(self, poi_search: Any, nearby_pois_count: int) -> Dict[str, Any]:
+        if not isinstance(poi_search, dict):
+            if nearby_pois_count <= 0:
+                return {}
+            return {
+                'status': 'legacy_unknown',
+                'result_count': nearby_pois_count,
+                'error': None,
+            }
+
+        # Keep only per-entry outcomes and minimal context.
+        # Static query config (categories/search_radii/query_version/etc.) is global
+        # and should not be repeated in every cache entry.
+        keep = ['attempted', 'search_radius_m', 'status', 'result_count', 'error']
+        compact = {}
+        for key in keep:
+            val = poi_search.get(key)
+            if val is not None:
+                compact[key] = val
+
+        fallback_context = self._compact_cache_fallback_context(poi_search.get('fallback_context'))
+        if fallback_context:
+            compact['fallback_context'] = fallback_context
+
+        if 'result_count' not in compact:
+            compact['result_count'] = nearby_pois_count
+        if 'status' not in compact:
+            compact['status'] = 'success' if nearby_pois_count > 0 else 'legacy_unknown'
+        if 'error' not in compact:
+            compact['error'] = None if nearby_pois_count > 0 else compact['status']
+
+        return compact
+
+    def _compact_cache_entry(self, entry: Dict[str, Any]) -> Dict[str, Any]:
+        # Preserve only runtime-relevant fields and lightweight geocoder context.
+        keep_keys = [
+            # GIS/geocoder context
+            'provider',
+            'formatted',
+            'display_name',
+            'road',
+            'city',
+            'state',
+            'country',
+            'country_code',
+            'osm_type',
+            'osm_id',
+            'category',
+            'type',
+
+            # Coordinates kept adjacent
+            'lat',
+            'lon',
+
+            # Watermark lines kept adjacent
+            'LLM_Watermark_Line1',
+            'LLM_Watermark_Line2',
+
+            # POI summary qualifiers
+            'poi_found',
+        ]
+
+        compact = {}
+        for key in keep_keys:
+            if key in entry and entry.get(key) is not None:
+                compact[key] = entry.get(key)
+
+        photos = entry.get('photos')
+        if isinstance(photos, list):
+            compact['photos'] = sorted({str(p) for p in photos if p})
+
+        nearby_pois = self._compact_cache_nearby_pois(entry.get('nearby_pois'))
+        compact['nearby_pois'] = nearby_pois
+
+        poi_search = self._compact_cache_poi_search(entry.get('poi_search'), len(nearby_pois))
+        if poi_search:
+            compact['poi_search'] = poi_search
+
+        namedetails = self._compact_cache_namedetails(entry.get('namedetails'))
+        if namedetails:
+            compact['namedetails'] = namedetails
+
+        extratags = self._compact_cache_extratags(entry.get('extratags'))
+        if extratags:
+            compact['extratags'] = extratags
+
+        return compact
+
+    def _compact_cache_schema(self, cache: Dict[str, Any]) -> Dict[str, Any]:
+        if not isinstance(cache, dict):
+            return {}
+        compact_cache = {}
+        for key, entry in cache.items():
+            if not isinstance(entry, dict):
+                continue
+            compact_cache[key] = self._compact_cache_entry(entry)
+        return compact_cache
     
     def _save_cache(self):
         """Save geocoding cache to disk"""
@@ -307,10 +478,12 @@ class GeoExtractor:
         
         cache_path = Path(self.cache_file)
         cache_path.parent.mkdir(parents=True, exist_ok=True)
+        compact_cache = self._compact_cache_schema(self.cache)
+        self.cache = compact_cache
         
         try:
             with open(cache_path, 'w') as f:
-                json.dump(self.cache, f, indent=2)
+                json.dump(compact_cache, f, indent=2, ensure_ascii=False)
         except Exception as e:
             print(f"Warning: Could not save cache: {e}")
     
@@ -677,9 +850,9 @@ class GeoExtractor:
         cached_query_version = poi_search.get('query_version')
         if cached_radius is not None and int(cached_radius) != int(self.poi_radius_m):
             return True
-        if set(map(str, cached_categories)) != set(map(str, self.poi_allowed_categories)):
+        if cached_categories and set(map(str, cached_categories)) != set(map(str, self.poi_allowed_categories)):
             return True
-        if cached_query_version != self.poi_query_version:
+        if cached_query_version and cached_query_version != self.poi_query_version:
             return True
 
         if nearby_pois:

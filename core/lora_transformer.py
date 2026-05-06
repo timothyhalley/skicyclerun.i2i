@@ -291,17 +291,20 @@ def save_result(image_path, result_image, config, input_base_folder=None, lora_n
                         break
         
         if original_source_path:
-            # Store under original source image path with lora generation metadata
-            lora_section = f"lora_generations.{style}"
+            # Store under consolidated per-style output metadata.
             patch = {
-                lora_section: {
-                    'output_path': output_path,
+                'watermarked_outputs': {
+                    style: {
+                    'lora_path': output_path,
                     'output_name': output_name,
+                    'seed': seed,
+                    'generated_at': metadata.get('generated_at'),
                     **metadata  # Include all metadata fields
+                    }
                 }
             }
             master_store.update_entry(original_source_path, patch, stage='lora_processing')
-            logInfo(f"📝 Saved LoRA metadata → master.json['{PathLib(original_source_path).name}']['{lora_section}']")
+            logInfo(f"📝 Saved LoRA metadata → master.json['{PathLib(original_source_path).name}']['watermarked_outputs.{style}']")
             logDebug(f"   seed={seed}, steps={metadata['num_inference_steps']}, guidance={metadata['guidance_scale']}")
         else:
             logWarn(f"⚠️  Could not find original source entry for {PathLib(image_path).name} in master.json")
@@ -378,16 +381,19 @@ def save_passthrough_copy(image_path, config, input_base_folder=None, lora_name=
                             break
 
             if original_source_path:
-                lora_section = f"lora_generations.{style}"
                 patch = {
-                    lora_section: {
-                        'output_path': output_path,
+                    'watermarked_outputs': {
+                        style: {
+                        'lora_path': output_path,
                         'output_name': output_name,
+                        'seed': None,
+                        'generated_at': metadata.get('generated_at'),
                         **metadata
+                        }
                     }
                 }
                 master_store.update_entry(original_source_path, patch, stage='lora_processing')
-                logInfo(f"📝 Saved LoRA metadata → master.json['{PathLib(original_source_path).name}']['{lora_section}']")
+                logInfo(f"📝 Saved LoRA metadata → master.json['{PathLib(original_source_path).name}']['watermarked_outputs.{style}']")
     except Exception as e:
         logWarn(f"⚠️  Could not write NoLoRA metadata to master.json: {e}")
 

@@ -34,6 +34,7 @@ from PIL.ExifTags import TAGS, GPSTAGS
 # Allow running this script directly from scripts/ while importing project modules.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from core.geo_extractor import GeoExtractor
 from utils.config_utils import resolve_config_placeholders
 
 
@@ -90,6 +91,10 @@ def load_json(path: Path) -> Dict[str, Any]:
 
 def save_json(path: Path, data: Dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    if path.name == "geocode_cache.json" and isinstance(data, dict):
+        data = GeoExtractor(
+            config={"metadata_extraction": {"providers": {"geocoding": {"cache": {"enabled": False}}}}}
+        )._compact_cache_schema(data)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
 
@@ -408,10 +413,8 @@ def merge_entries(existing: Dict[str, Any], incoming: Dict[str, Any]) -> None:
                 for k, v in src.items():
                     dst.setdefault(k, v)
 
-    # Merge lora_generations.<style> flat keys
-    for k, v in incoming.items():
-        if k.startswith("lora_generations.") and k not in existing:
-            existing[k] = v
+    # Do not merge legacy lora_generations.<style> flat keys.
+    # Consolidated style metadata lives under watermarked_outputs.<style>.
 
     # Keep watermark if missing on existing
     if "watermark" not in existing and "watermark" in incoming:
