@@ -1,7 +1,7 @@
 {
   "pipeline": {
     "name": "SkiCycleRun Photo Processing Pipeline",
-    "version": "2026-05-06 V06.013 🏃‍♀️",
+    "version": "2026-05-06 V06.014 🏃🏿‍♂️",
     "stages": [
       "export",
       "cleanup",

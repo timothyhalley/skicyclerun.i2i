@@ -21,6 +21,14 @@ class ImagePreprocessor:
         self.preserve_aspect = self.preprocess_config.get('preserve_aspect_ratio', True)
         self.optimize = self.preprocess_config.get('optimize', True)
         self.processed_metadata = {}
+
+    def discover_image_files(self, input_path: Path) -> list[Path]:
+        """Return image files preprocess_directory can process."""
+        image_extensions = ['*.jpg', '*.jpeg', '*.png', '*.webp', '*.JPG', '*.JPEG', '*.PNG']
+        image_files = []
+        for ext in image_extensions:
+            image_files.extend(list(input_path.glob(f'**/{ext}')))
+        return image_files
         
     def calculate_new_dimensions(self, original_size: Tuple[int, int]) -> Tuple[int, int]:
         """Calculate new dimensions while preserving aspect ratio"""
@@ -146,7 +154,13 @@ class ImagePreprocessor:
         except Exception as e:
             raise Exception(f"Failed to preprocess {input_path}: {e}")
     
-    def preprocess_directory(self, input_dir: str, output_dir: str, metadata_catalog: Optional[Dict] = None) -> Dict:
+    def preprocess_directory(
+        self,
+        input_dir: str,
+        output_dir: str,
+        metadata_catalog: Optional[Dict] = None,
+        expected_scan_count: Optional[int] = None,
+    ) -> Dict:
         """
         Preprocess all images in a directory
         
@@ -164,11 +178,14 @@ class ImagePreprocessor:
         if not input_path.exists():
             raise FileNotFoundError(f"Input directory not found: {input_dir}")
         
-        # Find all images
-        image_extensions = ['*.jpg', '*.jpeg', '*.png', '*.webp', '*.JPG', '*.JPEG', '*.PNG']
-        image_files = []
-        for ext in image_extensions:
-            image_files.extend(list(input_path.glob(f'**/{ext}')))
+        # Find all images this preprocessor supports.
+        image_files = self.discover_image_files(input_path)
+
+        if expected_scan_count is not None and len(image_files) != int(expected_scan_count):
+            raise RuntimeError(
+                f"Preprocess scope mismatch: expected {int(expected_scan_count)} input files, "
+                f"found {len(image_files)} under {input_dir}"
+            )
         
         if not image_files:
             print(f"⚠️  No images found in {input_dir}")

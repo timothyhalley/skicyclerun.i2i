@@ -701,10 +701,21 @@ class PipelineRunner:
             logWarn(f"⚠️  Input path does not exist: {raw_input_path} - skipping preprocessing")
             return
         
-        image_files = self._get_filtered_images_by_album(input_path)
+        preprocess_input_dir = raw_input_path
+        preprocess_output_dir = preprocessed_path
+        if self.album_filter:
+            preprocess_input_dir = str(Path(raw_input_path) / self.album_filter)
+            preprocess_output_dir = str(Path(preprocessed_path) / self.album_filter)
+            logInfo(f"🎯 Preprocessing scope input: {preprocess_input_dir}")
+            logInfo(f"🎯 Preprocessing scope output: {preprocess_output_dir}")
+
+        scoped_input_path = Path(preprocess_input_dir)
+        image_files = preprocessor.discover_image_files(scoped_input_path)
         if len(image_files) == 0:
-            logWarn(f"⚠️  No images found in {raw_input_path} - skipping preprocessing")
+            logWarn(f"⚠️  No processable images found in {preprocess_input_dir} - skipping preprocessing")
             return
+
+        logInfo(f"📊 Found {len(image_files)} images to preprocess")
         
         # Build a combined existing catalog from MasterStore for skipping and metadata merge
         existing_catalog = {}
@@ -738,10 +749,31 @@ class PipelineRunner:
         
         # Preprocess all images
         processed_catalog = preprocessor.preprocess_directory(
-            raw_input_path,
-            preprocessed_path,
-            existing_catalog
+            preprocess_input_dir,
+            preprocess_output_dir,
+            existing_catalog,
+            expected_scan_count=len(image_files),
         )
+
+        if self.album_filter and processed_catalog:
+            expected_album = self.album_filter
+            preprocessed_root = Path(preprocessed_path)
+            out_of_scope_outputs = []
+            for output_path_str in processed_catalog.keys():
+                try:
+                    rel = Path(output_path_str).relative_to(preprocessed_root)
+                except ValueError:
+                    out_of_scope_outputs.append(output_path_str)
+                    continue
+                if not rel.parts or rel.parts[0] != expected_album:
+                    out_of_scope_outputs.append(output_path_str)
+
+            if out_of_scope_outputs:
+                sample = out_of_scope_outputs[0]
+                raise RuntimeError(
+                    "Album scope violation during preprocessing: output escaped album filter "
+                    f"'{expected_album}'. Example: {sample}"
+                )
         
         # No legacy catalog writes
 
