@@ -208,6 +208,7 @@ def _entry_for_story_prompt(entry: Dict[str, Any], max_photos: int, max_pois: in
             "state": location.get("state"),
             "country": location.get("country"),
         },
+        "author_note": entry.get("author_note") or None,
         "high_level_summary": entry.get("high_level_summary"),
         "geocode_cache": {
             "photos": photos[:max(0, max_photos)],
@@ -532,8 +533,11 @@ def _validate_resolved_map_prompt(
 
 
 def _repair_midjourney_contract(prompt_text: str, map_cfg: Dict[str, Any]) -> str:
-    repaired = prompt_text
+    repaired = prompt_text.strip()
     primary_style = str(map_cfg.get("artist_style") or "").strip()
+    map_width = max(1, int(map_cfg.get("image_width") or 800))
+    map_height = max(1, int(map_cfg.get("image_height") or 800))
+    aspect_ratio = f"{map_width}:{map_height}"
 
     # Ensure required cues appear in the Midjourney prompt body even if model omitted them.
     required_phrases = [
@@ -542,6 +546,11 @@ def _repair_midjourney_contract(prompt_text: str, map_cfg: Dict[str, Any]) -> st
     ]
     if primary_style:
         required_phrases.append(f"Primary style: {primary_style}.")
+
+    if "# Navigium Map Prompt" not in repaired:
+        repaired = "# Navigium Map Prompt\n\n## 1. Target Image Command (Midjourney)\n\n### Midjourney Prompt\n" + repaired.lstrip()
+    elif "### Midjourney Prompt" not in repaired:
+        repaired = repaired.replace("## 1. Target Image Command (Midjourney)", "## 1. Target Image Command (Midjourney)\n\n### Midjourney Prompt", 1)
 
     prompt_anchor = "Prompt:"
     if prompt_anchor in repaired:
@@ -557,15 +566,29 @@ def _repair_midjourney_contract(prompt_text: str, map_cfg: Dict[str, Any]) -> st
             else:
                 prompt_line = "Prompt: Create an isometric travel map. " + prompt_line
 
-        missing = [p for p in required_phrases if p not in repaired]
+        missing = [phrase for phrase in required_phrases if phrase not in prompt_line]
         if missing:
             prompt_line = prompt_line.rstrip() + " " + " ".join(missing)
         repaired = repaired[:start] + prompt_line + repaired[line_end:]
     else:
-        repaired = repaired.rstrip() + "\n\nPrompt: Create an isometric travel map."
-        missing = [p for p in required_phrases if p not in repaired]
+        prompt_line = "Prompt: Create an isometric travel map."
+        missing = [phrase for phrase in required_phrases if phrase not in prompt_line]
         if missing:
-            repaired = repaired.rstrip() + " " + " ".join(missing)
+            prompt_line = prompt_line.rstrip() + " " + " ".join(missing)
+        repaired = repaired.rstrip() + "\n" + prompt_line
+
+    if "Parameters:" not in repaired:
+        parameters_line = (
+            f"Parameters: --ar {aspect_ratio} --stylize 200 --chaos 8 --quality 1 --v 7 --no text, labels outside RAG, hallucinated geography, duplicate POIs"
+        )
+        prompt_start = repaired.find("Prompt:")
+        if prompt_start != -1:
+            prompt_end = repaired.find("\n", prompt_start)
+            if prompt_end == -1:
+                prompt_end = len(repaired)
+            repaired = repaired[:prompt_end] + "\n" + parameters_line + repaired[prompt_end:]
+        else:
+            repaired = repaired.rstrip() + "\n" + parameters_line
 
     return repaired
 
@@ -1107,6 +1130,7 @@ def generate_travel_log_from_config(
                 "album_name": album_name,
                 "captured_at_utc": _normalized_dt_text(dt_utc),
                 "captured_at_local": _normalized_dt_text(dt_local),
+                "author_note": str(entry.get("author_note") or "").strip() or None,
                 "gps": {
                     "lat": gps.get("lat"),
                     "lon": gps.get("lon"),

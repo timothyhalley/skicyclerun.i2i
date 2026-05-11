@@ -580,6 +580,7 @@ class PipelineRunner:
                         "date_taken_utc": metadata.get("date_taken_utc"),
                         "gps": metadata.get("gps"),  # Clean GPS node: {lat, lon, altitude, heading, cardinal}
                         "location": metadata.get("location"),  # Geocoding result with formatted string
+                        "author_note": metadata.get("author_note") or None,  # Photographer narrative (EXIF ImageDescription)
                     }
                     
                     self.master_store.update_entry(image_path_str, patch, stage='metadata_extraction')
@@ -1560,10 +1561,24 @@ class PipelineRunner:
                         continue
                     
                     try:
+                        # Extract image dimensions before upload
+                        from PIL import Image as _PILImage
+                        with _PILImage.open(image_file) as _img:
+                            _img_w, _img_h = _img.size
+                        if not (isinstance(_img_w, int) and isinstance(_img_h, int)
+                                and _img_w > 0 and _img_h > 0):
+                            raise ValueError(
+                                f"Invalid dimensions for {image_file.name}: {_img_w}x{_img_h}"
+                            )
+
                         # Upload file (will overwrite if exists)
                         extra_args = {
                             'ContentType': s3_config.get('content_type', 'image/webp'),
                             'CacheControl': s3_config.get('cache_control', 'max-age=31536000, public'),
+                            'Metadata': {
+                                'width': str(_img_w),
+                                'height': str(_img_h),
+                            },
                         }
                         
                         if s3_config.get('acl'):

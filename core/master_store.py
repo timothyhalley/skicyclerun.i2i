@@ -33,6 +33,7 @@ class MasterStore:
         "date_taken_utc",
         "gps",
         "location",
+        "author_note",
         "derivatives",
         "watermark_ref",
         "watermarked_outputs",
@@ -222,7 +223,7 @@ class MasterStore:
             "pipeline": self._compact_pipeline(entry.get("pipeline")),
         }
 
-        for key in ("date_taken", "date_taken_utc"):
+        for key in ("date_taken", "date_taken_utc", "author_note"):
             if entry.get(key) not in (None, ""):
                 pruned[key] = entry.get(key)
 

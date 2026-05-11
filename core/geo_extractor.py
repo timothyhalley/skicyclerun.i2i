@@ -15,6 +15,7 @@ from PIL import Image
 from PIL.ExifTags import TAGS, GPSTAGS
 from .poi_osm_queries import get_nearby_interesting_pois, get_natural_context_pois, _merge_poi_lists
 from .poi_overpass import get_overpass_stats, reset_overpass_stats
+from .poi_exif import get_exif_author_note
 
 class GeoExtractor:
     def __init__(self, config: Dict):
@@ -1420,7 +1421,12 @@ class GeoExtractor:
             
         except Exception as e:
             print(f"Warning: Could not extract minimal EXIF from {image_path}: {e}")
-        
+
+        # Author narrative note: EXIF ImageDescription or UserComment set by photographer
+        author_note = get_exif_author_note(image_path)
+        if author_note:
+            exif_dict['author_note'] = author_note
+
         return exif_dict
     
     def extract_gps_data(self, image_path: str) -> Dict:
@@ -1499,12 +1505,17 @@ class GeoExtractor:
             'date_taken': None,
             'date_taken_utc': None,
             'gps': None,
-            'location': None
+            'location': None,
+            'author_note': None,
         }
         
-        # Extract MINIMAL EXIF data (only DateTimeOriginal)
+        # Extract MINIMAL EXIF data (DateTimeOriginal + author_note)
         exif_data = self.extract_minimal_exif(image_path)
-        
+
+        # Propagate author narrative note if present
+        if exif_data.get('author_note'):
+            metadata['author_note'] = exif_data['author_note']
+
         # Extract primary date_taken from EXIF (prefer DateTimeOriginal)
         if 'date_time_original' in exif_data:
             metadata['date_taken'] = exif_data['date_time_original']

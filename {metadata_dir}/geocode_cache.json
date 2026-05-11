@@ -1,0 +1,57 @@
+{
+  "23.063131,-109.696486": {
+    "provider": "nominatim",
+    "display_name": "Calle José María Morelos, San José del Cabo, Municipio de Los Cabos, Baja California Sur, 20456, México",
+    "road": "Calle José María Morelos",
+    "city": "San José del Cabo",
+    "state": "Baja California Sur",
+    "country": "México",
+    "country_code": "mx",
+    "osm_type": "way",
+    "osm_id": 74001909,
+    "category": "highway",
+    "type": "residential",
+    "lat": 23.063130555555556,
+    "lon": -109.69648611111111,
+    "poi_found": false,
+    "photos": [
+      "IMG_6206.jpeg"
+    ],
+    "nearby_pois": [
+      {
+        "name": "La Lupita",
+        "category": "restaurant",
+        "type": "restaurant",
+        "distance_m": 0.2,
+        "bearing_deg": 155.79600181484625,
+        "bearing_cardinal": "SE"
+      },
+      {
+        "name": "Chamuyo",
+        "category": "restaurant",
+        "type": "restaurant",
+        "distance_m": 8.7,
+        "bearing_deg": 6.2562999893712,
+        "bearing_cardinal": "N"
+      },
+      {
+        "name": "Morgan's Encore",
+        "category": "restaurant",
+        "type": "restaurant",
+        "distance_m": 43.0,
+        "bearing_deg": 151.32141080686063,
+        "bearing_cardinal": "SE"
+      }
+    ],
+    "poi_search": {
+      "attempted": true,
+      "search_radius_m": 50,
+      "status": "success",
+      "result_count": 3,
+      "error": null
+    },
+    "namedetails": {
+      "name": "Calle José María Morelos"
+    }
+  }
+}

@@ -10,6 +10,7 @@
 #   ./run_Pipeline.sh --stages lora_processing
 #   ./run_Pipeline.sh --lora_processing        # shorthand for --stages lora_processing
 #   ./run_Pipeline.sh --stages lora_processing post_lora_watermarking s3_deployment
+#   ./run_Pipeline.sh --stages metadata_extraction llm_image_analysis --llm --map preprocessing lora_processing post_lora_watermarking travel_log_generation s3_deployment
 # ============================================================================
 set -euo pipefail
 
@@ -69,30 +70,42 @@ export TOKENIZERS_PARALLELISM=false
 # This maps to:
 #   ./run_Pipeline.sh --stages lora_processing
 normalized_args=()
-shortcut_stages=()
-has_stages_flag=0
+stage_args=()
+collecting_stage_args=0
 
-for arg in "$@"; do
-  case "$arg" in
-    --stages|-stages)
-      has_stages_flag=1
-      normalized_args+=("$arg")
-      ;;
-    --export|--cleanup|--metadata_extraction|--llm_image_analysis|--preprocessing|--lora_processing|--post_lora_watermarking|--travel_log_generation|--s3_deployment)
-      shortcut_stages+=("${arg#--}")
+is_stage_token() {
+  case "$1" in
+    --export|export|--cleanup|cleanup|--metadata_extraction|metadata_extraction|--llm_image_analysis|llm_image_analysis|--preprocessing|preprocessing|--lora_processing|lora_processing|--post_lora_watermarking|post_lora_watermarking|--travel_log_generation|travel_log_generation|--s3_deployment|s3_deployment)
+      return 0
       ;;
     *)
-      normalized_args+=("$arg")
+      return 1
       ;;
   esac
+}
+
+for arg in "$@"; do
+  if [[ "$arg" == --stages || "$arg" == -stages ]]; then
+    collecting_stage_args=1
+    continue
+  fi
+
+  if [[ $collecting_stage_args -eq 1 && "$arg" != -* ]]; then
+    stage_args+=("$arg")
+    continue
+  fi
+
+  collecting_stage_args=0
+
+  if is_stage_token "$arg"; then
+    stage_args+=("${arg#--}")
+  else
+    normalized_args+=("$arg")
+  fi
 done
 
-if [[ ${#shortcut_stages[@]} -gt 0 ]]; then
-  if [[ $has_stages_flag -eq 1 ]]; then
-    printf '❌  Do not mix stage shorthand flags with --stages. Use one style.\n' >&2
-    exit 2
-  fi
-  normalized_args=(--stages "${shortcut_stages[@]}" "${normalized_args[@]}")
+if [[ ${#stage_args[@]} -gt 0 ]]; then
+  normalized_args=(--stages "${stage_args[@]}" "${normalized_args[@]}")
 fi
 
 # ── Launch ────────────────────────────────────────────────────────────────────

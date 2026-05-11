@@ -17,6 +17,7 @@ Output Format Guide:
 
 Hard Requirements:
 - Base every claim on the provided metadata.
+- **Author Notes are ground truth.** Any RAG entry where `author_note` is non-null contains a first-person note written by the photographer at the moment of capture. Treat this as the primary narrative seed for that moment — it reveals *why* the photo was taken, the personal experience, and the emotional context the LLM cannot infer from GPS or POI data alone. Reflect `author_note` content explicitly in the prose; do not paraphrase into generic language.
 - If details are weak or missing, be explicit and move on without speculation.
 - Keep prose concise but expressive.
 - Prioritize memorable phrasing, rhythm, and contrast over flat summary.
