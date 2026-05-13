@@ -1,8 +1,9 @@
 """EXIF GPS extraction from image files."""
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 
 from PIL import Image
 from PIL.ExifTags import GPSTAGS, TAGS
+import piexif
 
 
 def _normalize_exif_text(value) -> Optional[str]:
@@ -70,6 +71,41 @@ def get_exif_author_note(image_path: str) -> Optional[str]:
             return image_description or user_comment or None
     except Exception:
         return None
+
+
+def _decode_xp_keywords(raw_value) -> List[str]:
+    if raw_value in (None, b"", ""):
+        return []
+
+    if isinstance(raw_value, tuple):
+        try:
+            raw_value = bytes(raw_value)
+        except Exception:
+            raw_value = b""
+
+    if isinstance(raw_value, bytes):
+        try:
+            text = raw_value.decode("utf-16le", errors="ignore")
+        except Exception:
+            text = raw_value.decode("utf-8", errors="ignore")
+    else:
+        text = str(raw_value)
+
+    cleaned = text.replace("\x00", "").strip()
+    if not cleaned:
+        return []
+
+    return [part.strip() for part in cleaned.split(";") if part.strip()]
+
+
+def get_exif_keywords(image_path: str) -> List[str]:
+    """Return keyword hints exported in standard EXIF/XPKeywords form."""
+    try:
+        exif_dict = piexif.load(image_path)
+        raw_keywords = exif_dict.get("0th", {}).get(piexif.ImageIFD.XPKeywords)
+        return _decode_xp_keywords(raw_keywords)
+    except Exception:
+        return []
 
 
 def _convert_to_degrees(value) -> float:

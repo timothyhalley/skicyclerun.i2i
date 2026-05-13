@@ -15,7 +15,7 @@ from PIL import Image
 from PIL.ExifTags import TAGS, GPSTAGS
 from .poi_osm_queries import get_nearby_interesting_pois, get_natural_context_pois, _merge_poi_lists
 from .poi_overpass import get_overpass_stats, reset_overpass_stats
-from .poi_exif import get_exif_author_note
+from .poi_exif import get_exif_author_note, get_exif_keywords
 
 class GeoExtractor:
     def __init__(self, config: Dict):
@@ -1427,6 +1427,10 @@ class GeoExtractor:
         if author_note:
             exif_dict['author_note'] = author_note
 
+        keywords = get_exif_keywords(image_path)
+        if keywords:
+            exif_dict['keywords'] = keywords
+
         return exif_dict
     
     def extract_gps_data(self, image_path: str) -> Dict:
@@ -1507,6 +1511,7 @@ class GeoExtractor:
             'gps': None,
             'location': None,
             'author_note': None,
+            'keywords': [],
         }
         
         # Extract MINIMAL EXIF data (DateTimeOriginal + author_note)
@@ -1515,6 +1520,10 @@ class GeoExtractor:
         # Propagate author narrative note if present
         if exif_data.get('author_note'):
             metadata['author_note'] = exif_data['author_note']
+
+        # Propagate keyword hints if present
+        if exif_data.get('keywords'):
+            metadata['keywords'] = exif_data['keywords']
 
         # Extract primary date_taken from EXIF (prefer DateTimeOriginal)
         if 'date_time_original' in exif_data:

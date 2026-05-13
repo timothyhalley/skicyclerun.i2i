@@ -74,6 +74,7 @@ class LLMImageAnalyzer:
         gps: Dict,
         poi_search: Dict,
         photo_name: str = "",
+        source_hints: Optional[Dict[str, Any]] = None,
     ) -> str:
         """
         Build terse prompt for vision/text LLM
@@ -87,6 +88,11 @@ class LLMImageAnalyzer:
         Returns:
             JSON-formatted prompt string
         """
+
+        source_hints = source_hints or {}
+        caption_hint = str(source_hints.get('author_note') or '').strip()
+        keyword_values = source_hints.get('keywords') if isinstance(source_hints.get('keywords'), list) else []
+        keyword_hint = ", ".join([str(keyword).strip() for keyword in keyword_values if str(keyword).strip()])
         # Extract GPS coordinates
         lat = gps.get('lat', 'unknown')
         lon = gps.get('lon', 'unknown')
@@ -184,6 +190,15 @@ NEARBY POINTS OF INTEREST ({len(nearby_pois)} within {search_radius}m):
 FULL GEO ENTRY JSON:
 {geo_json}
 
+SOURCE HINTS FROM EXPORTED PHOTO METADATA:
+    Caption / description: {caption_hint or 'N/A'}
+    Keywords: {keyword_hint or 'N/A'}
+
+HINT PRIORITY:
+- Prefer the exported caption and keyword hints when they are specific and relevant.
+- Use POI and geocoded location metadata to ground the wording and prevent hallucination.
+- If hints and POI context disagree, keep the hint as the semantic signal but only express facts supported by the geocoded context.
+
 TASK:
 Return ONLY valid JSON with these fields:
 - LLM_Watermark_Line1: no more than {self.max_line1_words} words
@@ -223,6 +238,7 @@ OUTPUT FORMAT:
         gps: Dict,
         poi_search: Dict,
         photo_name: str = "",
+        source_hints: Optional[Dict[str, Any]] = None,
         timeout: int = 30,
         debug_output_path: Optional[str] = None
     ) -> Optional[Dict]:
@@ -254,6 +270,7 @@ OUTPUT FORMAT:
                 gps=gps,
                 poi_search=poi_search,
                 photo_name=photo_name,
+                source_hints=source_hints,
             )
             
             payload: Dict[str, Any] = {

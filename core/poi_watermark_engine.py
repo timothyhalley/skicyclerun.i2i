@@ -172,7 +172,12 @@ def _tokenize_text(value: str) -> List[str]:
     return [tok for tok in re.split(r"[^a-z0-9]+", (value or "").lower()) if len(tok) >= 3]
 
 
-def _grounding_terms(reverse_info: Dict[str, Any], here_place: Optional[Dict[str, Any]], nearby_pois: List[Dict[str, Any]]) -> set:
+def _grounding_terms(
+    reverse_info: Dict[str, Any],
+    here_place: Optional[Dict[str, Any]],
+    nearby_pois: List[Dict[str, Any]],
+    source_hints: Optional[Dict[str, Any]] = None,
+) -> set:
     """Build a set of factual location tokens that LLM text must reference."""
     terms: set = set()
     address = reverse_info.get("address") or {}
@@ -187,6 +192,13 @@ def _grounding_terms(reverse_info: Dict[str, Any], here_place: Optional[Dict[str
 
     for poi in nearby_pois[:5]:
         for tok in _tokenize_text(str(poi.get("name") or "")):
+            terms.add(tok)
+
+    source_hints = source_hints or {}
+    for tok in _tokenize_text(str(source_hints.get("author_note") or "")):
+        terms.add(tok)
+    for keyword in source_hints.get("keywords") or []:
+        for tok in _tokenize_text(str(keyword or "")):
             terms.add(tok)
 
     return terms
@@ -233,6 +245,7 @@ def _compose_hybrid_lines(
     here_place: Optional[Dict[str, Any]],
     nearby_pois: List[Dict[str, Any]],
     cached_geo: Optional[Dict[str, Any]],
+    source_hints: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, str]:
     """Blend LLM wording with rule-based factual lines.
 
@@ -252,7 +265,7 @@ def _compose_hybrid_lines(
     llm_line1 = str(cached_geo.get("LLM_Watermark_Line1") or "").strip()
     llm_line2 = str(cached_geo.get("LLM_Watermark_Line2") or "").strip()
 
-    grounding = _grounding_terms(reverse_info, here_place, nearby_pois)
+    grounding = _grounding_terms(reverse_info, here_place, nearby_pois, source_hints=source_hints)
 
     line1 = rule_line1
     line1_source = "rules"
@@ -542,6 +555,7 @@ def build_watermark_from_cached_context(
     lon: Optional[float],
     location: Optional[Dict[str, Any]] = None,
     cached_geo: Optional[Dict[str, Any]] = None,
+    source_hints: Optional[Dict[str, Any]] = None,
     bilingual_output: bool = BILINGUAL_OUTPUT,
 ) -> Dict[str, Any]:
     """Build line1/line2 from cached geocode context without Overpass/Nominatim calls."""
@@ -614,6 +628,7 @@ def build_watermark_from_cached_context(
         here_place=here_place,
         nearby_pois=nearby_pois,
         cached_geo=cached_geo,
+        source_hints=source_hints,
     )
     line1 = hybrid["line1"]
     line2 = hybrid["line2"]

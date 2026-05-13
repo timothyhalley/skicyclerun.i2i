@@ -34,6 +34,7 @@ class MasterStore:
         "gps",
         "location",
         "author_note",
+        "keywords",
         "derivatives",
         "watermark_ref",
         "watermarked_outputs",
@@ -100,6 +101,12 @@ class MasterStore:
         if not isinstance(location, dict):
             return None
         compact = {k: location.get(k) for k in self._ALLOWED_LOCATION_KEYS if location.get(k) not in (None, "")}
+        return compact or None
+
+    def _compact_keywords(self, keywords: Any) -> Optional[List[str]]:
+        if not isinstance(keywords, list):
+            return None
+        compact = [str(keyword).strip() for keyword in keywords if str(keyword).strip()]
         return compact or None
 
     def _compact_pipeline(self, pipeline: Any) -> Dict[str, Any]:
@@ -226,6 +233,10 @@ class MasterStore:
         for key in ("date_taken", "date_taken_utc", "author_note"):
             if entry.get(key) not in (None, ""):
                 pruned[key] = entry.get(key)
+
+        compact_keywords = self._compact_keywords(entry.get("keywords"))
+        if compact_keywords:
+            pruned["keywords"] = compact_keywords
 
         compact_gps = self._compact_gps(entry.get("gps"))
         if compact_gps:

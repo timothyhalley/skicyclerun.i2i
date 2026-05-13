@@ -207,6 +207,21 @@ def is_already_processed(image_path, config, input_base_folder=None, lora_name=N
     
     return False
 
+
+def _dedupe_paths(paths):
+    unique = []
+    seen = set()
+    for path in paths:
+        try:
+            key = str(Path(path).resolve())
+        except Exception:
+            key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(path)
+    return sorted(unique)
+
 # ────────────────────────────────────────────────────────────────────────
 # Save result image with timestamp (maintains subfolder structure)
 # ────────────────────────────────────────────────────────────────────────
@@ -339,6 +354,23 @@ def save_passthrough_copy(image_path, config, input_base_folder=None, lora_name=
     else:
         output_path = os.path.join(config["output_folder"], output_name)
 
+    if os.path.exists(output_path):
+        logInfo(f"⏭️  NoLoRA output already exists, skipping copy: {output_path}")
+        metadata = {
+            'seed': None,
+            'style': style,
+            'prompt': '',
+            'negative_prompt': '',
+            'num_inference_steps': 0,
+            'guidance_scale': 0,
+            'device': config.get('device'),
+            'precision': config.get('precision'),
+            'source_image': image_path,
+            'generated_at': datetime.now().isoformat(),
+            'passthrough': True,
+        }
+        return output_path, metadata
+
     shutil.copy2(image_path, output_path)
 
     metadata = {
@@ -416,7 +448,7 @@ def get_image_files(folder, album_filter=None):
     # Use recursive glob to find images in all subfolders
     for pattern in ["*.png", "*.jpg", "*.jpeg", "*.webp", "*.PNG", "*.JPG", "*.JPEG", "*.WEBP"]:
         image_files.extend(glob(os.path.join(search_root, "**", pattern), recursive=True))
-    return sorted(image_files)
+    return _dedupe_paths(image_files)
 
 # ────────────────────────────────────────────────────────────────────────
 # Main execution

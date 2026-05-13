@@ -88,8 +88,20 @@ def find_images_in_directory(directory: Path) -> List[Path]:
     
     # Filter to only files that actually exist (glob can return broken paths)
     image_files = [f for f in image_files if f.exists() and f.is_file()]
-    
-    return image_files
+
+    unique_files = []
+    seen = set()
+    for image_path in image_files:
+        try:
+            key = str(image_path.resolve())
+        except Exception:
+            key = str(image_path)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique_files.append(image_path)
+
+    return sorted(unique_files)
 
 
 class PipelineRunner:
@@ -326,6 +338,36 @@ class PipelineRunner:
             return float(lat), float(lon)
         except (TypeError, ValueError):
             return None, None
+
+    def _validate_album_filter(self, stages: List[str]) -> bool:
+        """Fail fast when the requested album does not exist for the selected stages."""
+        if not self.album_filter:
+            return True
+
+        stage_roots = []
+        if any(stage in stages for stage in ('metadata_extraction', 'preprocessing')):
+            stage_roots.append(('metadata_extraction/preprocessing', self.paths.get('raw_input')))
+        if 'lora_processing' in stages and 'preprocessing' not in stages:
+            stage_roots.append(('lora_processing', self.paths.get('preprocessed')))
+        if 'post_lora_watermarking' in stages and 'lora_processing' not in stages:
+            stage_roots.append(('post_lora_watermarking', self.paths.get('lora_processed')))
+        if 's3_deployment' in stages and 'post_lora_watermarking' not in stages:
+            stage_roots.append(('s3_deployment', self.paths.get('final_albums')))
+
+        for stage_name, root_path in stage_roots:
+            if not root_path:
+                continue
+            root = Path(root_path)
+            album_path = root / self.album_filter
+            if not album_path.exists() or not album_path.is_dir():
+                logError("❌ Requested album not found for this run")
+                logError(f"   Album: {self.album_filter}")
+                logError(f"   Stage: {stage_name}")
+                logError(f"   Expected folder: {album_path}")
+                logError("   Fix the album name or choose a valid album folder, then rerun.")
+                return False
+
+        return True
     
     def run_export_stage(self):
         """Stage 1: Export photos from Apple Photos"""
@@ -581,6 +623,7 @@ class PipelineRunner:
                         "gps": metadata.get("gps"),  # Clean GPS node: {lat, lon, altitude, heading, cardinal}
                         "location": metadata.get("location"),  # Geocoding result with formatted string
                         "author_note": metadata.get("author_note") or None,  # Photographer narrative (EXIF ImageDescription)
+                        "keywords": metadata.get("keywords") or None,  # Photographer keyword hints from exported metadata
                     }
                     
                     self.master_store.update_entry(image_path_str, patch, stage='metadata_extraction')
@@ -949,6 +992,7 @@ class PipelineRunner:
                 gps=gps,
                 poi_search=poi_search,
                 photo_name=representative_photo,
+                source_hints=(self.master_store.get(representative_path) if self.master_store and representative_path else None),
                 timeout=timeout_seconds,
                 debug_output_path=debug_output_path,
             )
@@ -1027,6 +1071,45 @@ class PipelineRunner:
         logInfo(f"🎨 Processing {len(loras_to_process)} LoRA styles: {', '.join(loras_to_process)}")
         if self.album_filter:
             logInfo(f"🎯 Album filter active: {self.album_filter}")
+
+        eligible_sources = []
+        if self.master_store:
+            for source_path, entry in self.master_store.list_paths().items():
+                pipeline_stages = set((entry.get('pipeline') or {}).get('stages') or [])
+                if 'metadata_extraction' not in pipeline_stages:
+                    continue
+                if self.album_filter:
+                    try:
+                        if self.album_filter not in Path(source_path).parts:
+                            continue
+                    except Exception:
+                        continue
+                eligible_sources.append((source_path, entry))
+
+        def _style_output_exists(entry: dict, style_name: str) -> bool:
+            style_row = (entry.get('watermarked_outputs') or {}).get(style_name)
+            if not isinstance(style_row, dict):
+                return False
+            output_path = style_row.get('output_path') or style_row.get('lora_path')
+            return bool(output_path and Path(str(output_path)).exists())
+
+        if eligible_sources:
+            pending_styles = []
+            for lora_name in loras_to_process:
+                missing_for_style = [
+                    source_path for source_path, entry in eligible_sources
+                    if not _style_output_exists(entry, lora_name)
+                ]
+                if not missing_for_style:
+                    logInfo(f"⏭️  Skipping LoRA style '{lora_name}' - all eligible source images already have outputs in master.json")
+                    continue
+                pending_styles.append(lora_name)
+
+            loras_to_process = pending_styles
+
+        if not loras_to_process:
+            logInfo("✅ All requested LoRA styles already exist in master.json; skipping expensive LoRA generation")
+            return
 
         # Fail fast if LoRA input folder is empty to avoid expensive model load with no work.
         input_path_obj = Path(input_folder)
@@ -1296,6 +1379,7 @@ class PipelineRunner:
                     lon=source_lon,
                     location=source_metadata.get('location') or {},
                     cached_geo=cached_geo_entry,
+                    source_hints=source_metadata,
                     bilingual_output=bool(watermark_config.get('bilingual_output', True)),
                 )
 
@@ -1729,6 +1813,9 @@ class PipelineRunner:
         logInfo(f"🚀 Starting SkiCycleRun Pipeline")
         logInfo(f"📋 Stages to run: {', '.join(stages)}")
         logInfo(f"🈯 Watermark bilingual output: {'ON' if bilingual_output else 'OFF'}")
+
+        if not self._validate_album_filter(stages):
+            sys.exit(2)
 
         if 'post_lora_watermarking' in stages and 'metadata_extraction' not in stages:
             logWarn("⚠️  post_lora_watermarking requested without metadata_extraction in this run.")
