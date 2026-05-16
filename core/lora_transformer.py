@@ -899,6 +899,7 @@ def main():
             device,
             config["precision"],
             config,
+            heartbeat_seconds=300,
         )
 
         if args.debug:

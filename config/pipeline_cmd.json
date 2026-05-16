@@ -1,0 +1,24 @@
+{
+  "commands": {
+    "albumrebuild": {
+      "description": "Rebuild a single album end-to-end after fresh export",
+      "requires_album": true,
+      "args": [
+        "--stages",
+        "export",
+        "metadata_extraction",
+        "llm_image_analysis",
+        "preprocessing",
+        "lora_processing",
+        "post_lora_watermarking",
+        "travel_log_generation",
+        "s3_deployment",
+        "--llm",
+        "--map",
+        "--force-watermark",
+        "--force-llm-reanalysis",
+        "--yes"
+      ]
+    }
+  }
+}

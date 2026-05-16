@@ -270,6 +270,128 @@ class PipelineRunner:
             logWarn(f"⚠️  Failed to save geocode cache: {exc}")
             return False
 
+    def _reconcile_stale_data(self) -> Dict[str, int]:
+        """Remove stale entries from master.json and geocode_cache.json.
+
+        Compares what is currently on disk against both data stores and purges
+        any references to photos that no longer exist.  When album_filter is
+        active the scan is limited to that album folder, so photos in other
+        albums are never touched.
+
+        Geocode-cache cleanup strategy
+        --------------------------------
+        geocode_cache.json stores only photo *basenames* (no album path) in
+        each entry's ``photos`` list.  Removing a name is therefore only safe
+        when we are certain it came from the scoped album:
+
+        * Album-scoped run  → remove the exact stale basenames we found in
+          master.json for that album (safest; can't accidentally affect other
+          albums with identically-named files).
+        * Full run (no album filter) → remove any name not present on disk
+          anywhere across all albums (correct global sweep).
+
+        Returns a dict with cleanup stats.
+        """
+        albums_root = Path(self.paths.get('raw_input'))
+        stats: Dict[str, int] = {
+            'master_removed': 0,
+            'master_retained': 0,
+            'geocache_photos_removed': 0,
+            'geocache_entries_emptied': 0,
+        }
+
+        # ── 1. Determine scan scope ───────────────────────────────────────────
+        if self.album_filter:
+            scan_root = albums_root / self.album_filter
+        else:
+            scan_root = albums_root
+
+        if not scan_root.exists():
+            logWarn(f"⚠️  Reconcile: scan root not found: {scan_root}")
+            return stats
+
+        # ── 2. Build on-disk sets ─────────────────────────────────────────────
+        on_disk_files = find_images_in_directory(scan_root)
+        on_disk_paths = {str(f) for f in on_disk_files}
+        on_disk_names: set[str] = {f.name for f in on_disk_files}
+
+        scope_label = f"album: {self.album_filter}" if self.album_filter else "all albums"
+        logInfo(f"🔍 Reconcile: {len(on_disk_files)} on-disk images ({scope_label})")
+
+        # ── 3. master.json ────────────────────────────────────────────────────
+        stale_paths: list[str] = []
+        if self.master_store:
+            scan_root_resolved = scan_root.resolve()
+            for file_path in list(self.master_store.list_paths().keys()):
+                try:
+                    Path(file_path).resolve().relative_to(scan_root_resolved)
+                except ValueError:
+                    continue  # outside current scope — leave untouched
+                if file_path not in on_disk_paths:
+                    stale_paths.append(file_path)
+
+            if stale_paths:
+                for p in stale_paths:
+                    del self.master_store.data[p]
+                self.master_store.save()
+                logInfo(f"🗑️  Reconcile master.json: removed {len(stale_paths)} stale entries")
+                for p in stale_paths:
+                    logInfo(f"   ✂️  {Path(p).name}  ({p})")
+            else:
+                logInfo("✅ Reconcile master.json: no stale entries")
+            stats['master_removed'] = len(stale_paths)
+            stats['master_retained'] = len(self.master_store.list_paths())
+
+        # ── 4. geocode_cache.json ─────────────────────────────────────────────
+        # Build the set of names to remove from the cache's photos lists.
+        if self.album_filter:
+            # Safe: only remove the exact stale names we know were in this album.
+            names_to_remove: set[str] | None = {Path(p).name for p in stale_paths}
+            if not names_to_remove:
+                logInfo("✅ Reconcile geocode_cache: no stale photo references (no stale master entries)")
+                return stats
+        else:
+            # Full sweep: keep any name still present on disk anywhere.
+            names_to_remove = None  # sentinel → use allowlist mode below
+
+        geocode_cache = self._load_geocode_cache()
+        if not geocode_cache:
+            return stats
+
+        cache_modified = False
+        for cache_key, cached_geo in list(geocode_cache.items()):
+            cached_geo = cached_geo or {}
+            photos: list[str] = list(cached_geo.get('photos') or [])
+            if not photos:
+                continue
+
+            if names_to_remove is not None:
+                # Album-scoped removal
+                new_photos = [p for p in photos if p not in names_to_remove]
+            else:
+                # Full allowlist removal
+                new_photos = [p for p in photos if p in on_disk_names]
+
+            removed = len(photos) - len(new_photos)
+            if removed > 0:
+                stats['geocache_photos_removed'] += removed
+                cache_modified = True
+                cached_geo['photos'] = new_photos
+                if not new_photos:
+                    stats['geocache_entries_emptied'] += 1
+                geocode_cache[cache_key] = cached_geo
+
+        if cache_modified:
+            self._save_geocode_cache(geocode_cache)
+            logInfo(
+                f"🗑️  Reconcile geocode_cache: removed {stats['geocache_photos_removed']} stale photo name(s)"
+                f" across {stats['geocache_entries_emptied']} now-empty coordinate cluster(s)"
+            )
+        else:
+            logInfo("✅ Reconcile geocode_cache: no stale photo references")
+
+        return stats
+
     def _build_photo_index(self, image_files: List[Path]) -> Dict[str, str]:
         """Map photo file names to absolute image paths for fast geocode cache lookup."""
         photo_index: Dict[str, str] = {}
@@ -345,7 +467,11 @@ class PipelineRunner:
             return True
 
         stage_roots = []
-        if any(stage in stages for stage in ('metadata_extraction', 'preprocessing')):
+        includes_export = 'export' in stages
+
+        # If export runs in the same invocation, metadata/preprocessing can
+        # legitimately target an album folder that does not exist yet.
+        if any(stage in stages for stage in ('metadata_extraction', 'preprocessing')) and not includes_export:
             stage_roots.append(('metadata_extraction/preprocessing', self.paths.get('raw_input')))
         if 'lora_processing' in stages and 'preprocessing' not in stages:
             stage_roots.append(('lora_processing', self.paths.get('preprocessed')))
@@ -400,6 +526,16 @@ class PipelineRunner:
                 summary = self._catalog_exported_files()
                 if summary.get("total_found", 0) == 0:
                     logWarn("⚠️  No image files were found under the export folder after export")
+
+                # Reconcile master.json + geocode_cache.json against the freshly
+                # exported album so deleted photos don't linger as stale entries.
+                logInfo("\n🔄 Reconciling data stores against exported album...")
+                reconcile_stats = self._reconcile_stale_data()
+                logInfo(
+                    f"   master removed={reconcile_stats['master_removed']}, "
+                    f"retained={reconcile_stats['master_retained']}, "
+                    f"geocache photos removed={reconcile_stats['geocache_photos_removed']}"
+                )
             else:
                 logError(f"❌ Export failed: {result.stderr}")
                 
@@ -521,27 +657,18 @@ class PipelineRunner:
             return
         
         logInfo("🗺️  Stage 2: Extracting metadata and geolocation")
-        
-        # CLEANUP: Remove stale entries from master.json for files that no longer exist in albums
-        # This ensures master.json only contains files from pipeline/albums
-        if self.master_store:
-            albums_path = Path(self.paths.get('raw_input'))
-            prune_stats = self.master_store.prune_to_minimal(
-                source_root=str(albums_path),
-                drop_missing_files=True,
-            )
-            if (
-                prune_stats.get('removed_non_source', 0) > 0
-                or prune_stats.get('removed_missing', 0) > 0
-                or prune_stats.get('pruned_entries', 0) > 0
-            ):
-                self.master_store.save()
-                logInfo(
-                    "🧹 Master cleanup: "
-                    f"removed_non_source={prune_stats.get('removed_non_source', 0)}, "
-                    f"removed_missing={prune_stats.get('removed_missing', 0)}, "
-                    f"pruned_entries={prune_stats.get('pruned_entries', 0)}"
-                )
+
+        # Reconcile master.json + geocode_cache.json against what is actually on
+        # disk before (re-)processing.  This catches any photos deleted from an
+        # album that weren't cleaned up by the export stage (e.g. when
+        # metadata_extraction is run standalone without a preceding export).
+        logInfo("\n🔄 Reconciling data stores before metadata extraction...")
+        reconcile_stats = self._reconcile_stale_data()
+        logInfo(
+            f"   master removed={reconcile_stats['master_removed']}, "
+            f"retained={reconcile_stats['master_retained']}, "
+            f"geocache photos removed={reconcile_stats['geocache_photos_removed']}"
+        )
         
         # Legacy catalog retired; skipping reads.
         
@@ -919,9 +1046,24 @@ class PipelineRunner:
 
         geocode_items = list(geocode_cache.items())
         total_entries = len(geocode_items)
+        if self.album_filter:
+            scoped_photo_names = set(photo_index.keys())
+            geocode_items = [
+                (cache_key, cached_geo)
+                for cache_key, cached_geo in geocode_items
+                if scoped_photo_names.intersection(cached_geo.get('photos') or [])
+            ]
+
+        selected_total_entries = len(geocode_items)
 
         logInfo(f"🧠 Stage 5: LLM watermark suggestion pass with {model}")
         logInfo(f"📦 geocode_cache entries: {total_entries}")
+        if self.album_filter:
+            logInfo(f"🎯 Album-scoped geocode entries: {selected_total_entries}")
+
+        if selected_total_entries == 0:
+            logWarn("⚠️  No geocode_cache entries matched the selected album - run metadata_extraction for that album first")
+            return
 
         for idx, (cache_key, cached_geo) in enumerate(geocode_items, 1):
             cached_geo = cached_geo or {}
@@ -977,7 +1119,7 @@ class PipelineRunner:
 
             selected_count += 1
             processed += 1
-            print(f"\n🧠 LLM Geo Entry: {representative_photo or cache_key} ({selected_count}/{min(total_entries, self.sweep_limit or total_entries)})")
+            print(f"\n🧠 LLM Geo Entry: {representative_photo or cache_key} ({selected_count}/{min(selected_total_entries, self.sweep_limit or selected_total_entries)})")
             print(f"   📍 Cache key: {cache_key}")
             if representative_path:
                 print(f"   🖼️  Photo: {Path(representative_path).name}")

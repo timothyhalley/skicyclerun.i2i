@@ -11,6 +11,8 @@
 #   ./run_Pipeline.sh --lora_processing        # shorthand for --stages lora_processing
 #   ./run_Pipeline.sh --stages lora_processing post_lora_watermarking s3_deployment
 #   ./run_Pipeline.sh --stages metadata_extraction llm_image_analysis --llm --map preprocessing lora_processing post_lora_watermarking travel_log_generation s3_deployment
+#   ./run_Pipeline.sh --list-cmds
+#   ./run_Pipeline.sh --cmd albumrebuild --album 2025-11-KelownaVisit
 # ============================================================================
 set -euo pipefail
 
@@ -64,6 +66,158 @@ export PYTORCH_MPS_LOW_WATERMARK_RATIO=0.7
 export OMP_NUM_THREADS=1
 export TOKENIZERS_PARALLELISM=false
 
+# ── Command preset expansion (optional) ─────────────────────────────────────
+# Supports reusable command aliases defined in config/pipeline_cmd.json, e.g.:
+#   ./run_Pipeline.sh --cmd albumrebuild --album 2025-11-KelownaVisit
+raw_args=("$@")
+cmd_config_path="$SCRIPT_DIR/config/pipeline_cmd.json"
+cmd_name=""
+list_cmds=0
+pass_args=()
+
+for ((i = 0; i < ${#raw_args[@]}; i++)); do
+  arg="${raw_args[$i]}"
+  case "$arg" in
+    --cmd)
+      if (( i + 1 >= ${#raw_args[@]} )); then
+        printf '❌  --cmd requires a preset name\n' >&2
+        exit 2
+      fi
+      cmd_name="${raw_args[$((i + 1))]}"
+      ((i++))
+      ;;
+    --cmd=*)
+      cmd_name="${arg#--cmd=}"
+      ;;
+    --cmd-config)
+      if (( i + 1 >= ${#raw_args[@]} )); then
+        printf '❌  --cmd-config requires a file path\n' >&2
+        exit 2
+      fi
+      cmd_config_path="${raw_args[$((i + 1))]}"
+      ((i++))
+      ;;
+    --cmd-config=*)
+      cmd_config_path="${arg#--cmd-config=}"
+      ;;
+    --list-cmds)
+      list_cmds=1
+      ;;
+    *)
+      pass_args+=("$arg")
+      ;;
+  esac
+done
+
+if [[ "$cmd_config_path" != /* ]]; then
+  cmd_config_path="$SCRIPT_DIR/$cmd_config_path"
+fi
+
+if [[ $list_cmds -eq 1 ]]; then
+  if [[ ! -f "$cmd_config_path" ]]; then
+    printf '❌  Command preset file not found: %s\n' "$cmd_config_path" >&2
+    exit 2
+  fi
+  "$PYTHON_CMD" - "$cmd_config_path" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+with open(path, 'r', encoding='utf-8') as f:
+    data = json.load(f)
+
+commands = data.get('commands', data)
+if not isinstance(commands, dict) or not commands:
+    print(f"No commands found in {path}")
+    sys.exit(0)
+
+print(f"Command presets in {path}:")
+for name in sorted(commands.keys()):
+    entry = commands[name]
+    if isinstance(entry, dict):
+        desc = entry.get('description') or 'No description'
+    else:
+        desc = 'No description'
+    print(f"  - {name}: {desc}")
+PY
+  exit 0
+fi
+
+expanded_args=()
+if (( ${#pass_args[@]} > 0 )); then
+  expanded_args=("${pass_args[@]}")
+fi
+
+if [[ -n "$cmd_name" ]]; then
+  if [[ ! -f "$cmd_config_path" ]]; then
+    printf '❌  Command preset file not found: %s\n' "$cmd_config_path" >&2
+    exit 2
+  fi
+
+  preset_payload="$($PYTHON_CMD - "$cmd_config_path" "$cmd_name" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+name = sys.argv[2]
+with open(path, 'r', encoding='utf-8') as f:
+    data = json.load(f)
+
+commands = data.get('commands', data)
+if not isinstance(commands, dict):
+    print(f"Invalid command preset file (expected object): {path}", file=sys.stderr)
+    sys.exit(2)
+if name not in commands:
+    print(f"Requested command preset not found: {name}", file=sys.stderr)
+    sys.exit(2)
+
+entry = commands[name]
+if isinstance(entry, dict):
+    args = entry.get('args')
+    requires_album = bool(entry.get('requires_album', False))
+else:
+    args = entry
+    requires_album = False
+
+if not isinstance(args, list) or not all(isinstance(x, str) for x in args):
+    print(f"Invalid args for preset '{name}' (expected string array)", file=sys.stderr)
+    sys.exit(2)
+
+sys.stdout.write(('1' if requires_album else '0') + '\n')
+sys.stdout.write('\x1f'.join(args))
+PY
+  )"
+
+  requires_album_flag="${preset_payload%%$'\n'*}"
+  preset_blob="${preset_payload#*$'\n'}"
+
+  preset_args=()
+  if [[ -n "$preset_blob" ]]; then
+    IFS=$'\x1f' read -r -a preset_args <<< "$preset_blob"
+  fi
+
+  album_supplied=0
+  if (( ${#pass_args[@]} > 0 )); then
+    for arg in "${pass_args[@]}"; do
+      if [[ "$arg" == "--album" || "$arg" == --album=* ]]; then
+        album_supplied=1
+        break
+      fi
+    done
+  fi
+
+  if [[ "$requires_album_flag" == "1" && $album_supplied -eq 0 ]]; then
+    printf '❌  Preset "%s" requires --album <name>\n' "$cmd_name" >&2
+    exit 2
+  fi
+
+  expanded_args=("${preset_args[@]}")
+  if (( ${#pass_args[@]} > 0 )); then
+    expanded_args+=("${pass_args[@]}")
+  fi
+  printf '🧩 Using preset "%s" from %s\n' "$cmd_name" "$cmd_config_path"
+fi
+
 # ── Stage shorthand normalization ────────────────────────────────────────────
 # Allow ergonomic one-flag stage calls like:
 #   ./run_Pipeline.sh --lora_processing
@@ -84,7 +238,7 @@ is_stage_token() {
   esac
 }
 
-for arg in "$@"; do
+for arg in "${expanded_args[@]}"; do
   if [[ "$arg" == --stages || "$arg" == -stages ]]; then
     collecting_stage_args=1
     continue
